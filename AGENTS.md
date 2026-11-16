@@ -71,3 +71,19 @@ source ~/prila-env.sh   # rust + cc wrapper + offline cargo + target dir
   inside the same transaction; komendant actions additionally via
   `state.komendant_log(...)`.
 - Money mutations run inside one DB transaction with `SELECT ... FOR UPDATE`.
+
+## Project status / next steps
+
+- Done: Rust server (`server/`, all endpoints, tests), admin web panel (`admin/`).
+- TODO: Expo (React Native, TypeScript) mobile app in `mobile/` for roles
+  student / komendant / teacher. Student: profile (debt/balance), scan QR to
+  start, finish = photo + QR scan, live timer, history, shop, orders,
+  notifications. Komendant: choose difficulty (light x1 / hard x2), rotating QR
+  (`POST /api/komendant/qr/open`, refresh `GET /api/komendant/qr` every ~10s),
+  confirm/reject pending sessions with photo. Teacher: groups -> students ->
+  assign hours. Push via Expo tokens (`POST /api/me/push-token`). Types: copy
+  `shared/api-types/*.ts` the same way as `admin/scripts/sync-types.mjs`.
+- Fresh machine (normal network): install Rust + PostgreSQL 16 (or
+  `docker compose up -d db`), copy `.env.example` to `server/.env` and fill it,
+  then `cd server && cargo run`; `cd admin && npm ci && npm run dev`
+  (http://localhost:5173, proxies `/api` to :8080).
