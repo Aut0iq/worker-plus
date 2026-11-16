@@ -77,7 +77,7 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 `{ items, total, page, per_page }`. Авторизация: `Authorization: Bearer <jwt>`.
 
 ### Auth / профиль / уведомления
-- `POST /api/auth/login` `{login,password}` → `{token,user}`
+- `POST /api/auth/login` `{login,password}` → `{token,user}`; лимит: 10 неудачных попыток за 15 мин (по ip+login) → 429 `too_many_attempts`
 - `GET /api/me` · `POST /api/me/password` `{old_password,new_password}`
 - `POST /api/me/push-token` / `DELETE /api/me/push-token` `{token}`
 - `GET /api/notifications` · `POST /api/notifications/{id}/read` · `POST /api/notifications/read-all`

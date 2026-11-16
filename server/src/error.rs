@@ -50,6 +50,10 @@ impl AppError {
         Self::new(StatusCode::CONFLICT, code, message)
     }
 
+    pub fn too_many_requests(code: &'static str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::TOO_MANY_REQUESTS, code, message)
+    }
+
     pub fn internal(err: impl std::fmt::Display) -> Self {
         tracing::error!(error = %err, "internal error");
         Self::new(

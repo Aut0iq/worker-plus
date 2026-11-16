@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
@@ -17,6 +19,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
     pub http: reqwest::Client,
+    /// Failed-login counter: key "ip|login" -> (failures, window start).
+    pub login_attempts: Arc<Mutex<HashMap<String, (u32, DateTime<Utc>)>>>,
     audit_file: Arc<Mutex<Option<NonBlocking>>>,
     komendant_file: Arc<Mutex<Option<NonBlocking>>>,
     _guard: Arc<Vec<WorkerGuard>>,
@@ -93,6 +97,7 @@ impl AppState {
             config,
             clock,
             http: reqwest::Client::new(),
+            login_attempts: Arc::new(Mutex::new(HashMap::new())),
             audit_file: Arc::new(Mutex::new(audit_file)),
             komendant_file: Arc::new(Mutex::new(komendant_file)),
             _guard: Arc::new(guards),

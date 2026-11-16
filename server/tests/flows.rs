@@ -647,3 +647,87 @@ async fn monthly_summary_catchup(pool: PgPool) {
         .unwrap()
         .is_none());
 }
+
+#[sqlx::test]
+async fn login_rate_limit_blocks_and_window_expires(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+
+    for _ in 0..10 {
+        let (st, _v) = call(
+            &app.app,
+            "POST",
+            "/api/auth/login",
+            None,
+            Some(json!({"login": "stud1", "password": "wrong"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED);
+    }
+
+    // 11th attempt is blocked even with the correct password
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"login": "stud1", "password": PASSWORD})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{v}");
+    assert_eq!(v["error"]["code"], "too_many_attempts");
+
+    let n: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM audit_log WHERE action = 'login_blocked'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 1);
+
+    // after the 15-minute window the same login works again
+    app.clock.advance_seconds(16 * 60);
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"login": "stud1", "password": PASSWORD})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(v["token"].is_string());
+}
+
+#[sqlx::test]
+async fn login_success_resets_attempt_counter(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+
+    let wrong = || {
+        call(
+            &app.app,
+            "POST",
+            "/api/auth/login",
+            None,
+            Some(json!({"login": "stud1", "password": "wrong"})),
+        )
+    };
+    for _ in 0..9 {
+        assert_eq!(wrong().await.0, StatusCode::UNAUTHORIZED);
+    }
+    // a successful login clears the counter
+    login(&app.app, "stud1").await;
+    for _ in 0..9 {
+        assert_eq!(wrong().await.0, StatusCode::UNAUTHORIZED);
+    }
+    // still under the limit in the new window: correct password succeeds
+    let (st, _v) = call(
+        &app.app,
+        "POST",
+        "/api/auth/login",
+        None,
+        Some(json!({"login": "stud1", "password": PASSWORD})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+}

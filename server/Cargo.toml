@@ -45,7 +45,6 @@ hex = "0.4"
 ts-rs = { version = "12", features = ["uuid-impl", "chrono-impl", "serde-json-impl"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rand = "0.10"
-futures = "0.3"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

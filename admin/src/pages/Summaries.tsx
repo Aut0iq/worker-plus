@@ -110,7 +110,7 @@ function SummaryDrawer({ summary, onClose }: { summary: SummaryDto | null; onClo
     const k = r.group_name ?? 'Без группы';
     groups.set(k, [...(groups.get(k) ?? []), r]);
   });
-  const sum = (arr: SummaryRowDto[], f: (r: SummaryRowDto) => bigint | number) =>
+  const sum = (arr: SummaryRowDto[], f: (r: SummaryRowDto) => number) =>
     arr.reduce((a, r) => a + Number(f(r)), 0);
   const cols = [
     { title: 'Студент', dataIndex: 'full_name' },

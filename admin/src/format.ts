@@ -11,7 +11,7 @@ export const setAppTimezone = (v: string) => {
 };
 export const getAppTimezone = () => tz;
 
-type Min = number | bigint | null | undefined;
+type Min = number | null | undefined;
 const num = (v: Min): number => (v == null ? 0 : Number(v));
 
 /** 104 -> "1ч 44м", 0 -> "0м" */
