@@ -12,9 +12,11 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const src = join(root, 'shared', 'api-types');
-const dst = join(root, 'admin', 'src', 'api', 'types');
+// Paths are relative to the admin dir: in the repo, shared/api-types is a
+// sibling of admin/; in Docker the admin stage copies it next to the build dir.
+const adminDir = join(dirname(fileURLToPath(import.meta.url)), '..');
+const src = process.env.API_TYPES_DIR ?? join(adminDir, '..', 'shared', 'api-types');
+const dst = join(adminDir, 'src', 'api', 'types');
 
 rmSync(dst, { recursive: true, force: true });
 mkdirSync(dst, { recursive: true });

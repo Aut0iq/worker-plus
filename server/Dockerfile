@@ -1,8 +1,9 @@
-# ---- admin frontend build (phase 2); the stage is skipped gracefully ----
-# ---- when admin/ does not exist because it is an empty dir in the context ----
+# ---- admin frontend build ----
 FROM node:20-alpine AS admin-build
 WORKDIR /build
-COPY admin/package.json admin/package-lock.json* ./
+# sync-types resolves ../shared/api-types relative to the admin dir -> /shared/api-types
+COPY shared/api-types /shared/api-types
+COPY admin/package.json admin/package-lock.json ./
 RUN npm ci
 COPY admin/ ./
 RUN npm run build
