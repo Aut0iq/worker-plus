@@ -212,6 +212,7 @@
   секреты в `/opt/worker-plus/.env` (chmod 600). API/админка: http://192.168.31.63:8080.
 - Сборочная копия для тестов Rust: `/root/dev/worker-plus` (контейнер `rust:1`, сеть
   `worker-plus_default`, volume-кэши `wp-cargo-reg`, `wp-cargo-target`).
+- Бэкап: cron в CT `0 17 * * *` (UTC = 03:00 Владивосток) → `/var/backups/prila`, 14 дней.
 - Тестовые пользователи: admin, teacher1, komendant1, student1–3 (группа ИС-21),
   награда «Тестовая награда» (60 мин). Пароли выданы заказчику в чате.
 - ⚠️ Инцидент: перевод репозитория на LF изменил байты `0001_init.sql`, и sqlx отказался
