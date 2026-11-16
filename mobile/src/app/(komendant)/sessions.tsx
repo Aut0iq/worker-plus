@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/api/client';
 import type { Paginated } from '@/api/types/Paginated';
@@ -55,8 +65,19 @@ export default function KomendantSessions() {
   const pItems = pending.data?.items ?? [];
   const aItems = active.data?.items ?? [];
 
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([pending.refetch(), active.refetch()]);
+    setRefreshing(false);
+  };
+
   return (
-    <ScrollView style={styles.wrap} contentContainerStyle={{ padding: 12 }}>
+    <ScrollView
+      style={styles.wrap}
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
+    >
       <ErrorText>{err}</ErrorText>
       <Text style={styles.section}>Ждут подтверждения</Text>
       {pItems.length === 0 && <Empty text="Никого нет" />}
@@ -64,13 +85,13 @@ export default function KomendantSessions() {
         <Card key={s.id}>
           <View style={{ flexDirection: 'row' }}>
             {s.has_photo && (
-              <Text onPress={() => setPhotoId(s.id)}>
+              <Pressable onPress={() => setPhotoId(s.id)}>
                 <AuthImage
                   path={`/api/komendant/sessions/${s.id}/photo`}
                   style={styles.thumb}
                   resizeMode="cover"
                 />
-              </Text>
+              </Pressable>
             )}
             <View style={{ flex: 1, marginLeft: s.has_photo ? 10 : 0 }}>
               <Text style={styles.title}>

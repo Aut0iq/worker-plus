@@ -15,6 +15,7 @@ pub struct Config {
     pub admin_password: String,
     pub expo_push_enabled: bool,
     pub expo_push_url: String,
+    pub trust_proxy: bool,
     pub cors_origins: String,
     pub max_session_hours: i64,
 }
@@ -44,6 +45,7 @@ impl Config {
                 .parse()
                 .unwrap_or(false),
             expo_push_url: opt("EXPO_PUSH_URL", "https://exp.host/--/api/v2/push/send"),
+            trust_proxy: opt("TRUST_PROXY", "false").parse().unwrap_or(false),
             cors_origins: opt("CORS_ORIGINS", "*"),
             max_session_hours: opt("MAX_SESSION_HOURS", "4")
                 .parse()

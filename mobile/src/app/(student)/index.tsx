@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { router } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/api/client';
@@ -19,26 +26,47 @@ export default function StudentHome() {
   const [scanning, setScanning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const me = useQuery({ queryKey: ['me'], queryFn: () => api.get<UserDto>('/api/me') });
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => api.get<UserDto>('/api/me'),
+    refetchInterval: 30_000,
+  });
   const active = useQuery({
     queryKey: ['active-session'],
     queryFn: () => api.get<ActiveSessionResponse>('/api/student/sessions/active'),
     refetchInterval: 15_000,
   });
 
-  // elapsed seconds, recomputed every 500ms against the server clock
-  const [elapsedSec, setElapsedSec] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await Promise.all([me.refetch(), active.refetch()]);
+    setRefreshing(false);
+  };
+
+  // elapsed seconds, tagged with the session id so a stale value is never shown;
+  // recomputed every 500ms against the server clock
+  const [elapsed, setElapsed] = useState<{ id: string; sec: number } | null>(null);
   const s = active.data?.session ?? null;
   useEffect(() => {
     const serverNow = active.data?.server_now;
-    if (!s || s.status !== 'active' || !serverNow) return;
+    const cur = s?.status === 'active' ? s : null;
+    if (!cur || !serverNow) return;
     const offsetMs = Date.parse(serverNow) - Date.now();
-    const started = Date.parse(s.started_at);
-    const t = setInterval(() => {
-      setElapsedSec(Math.floor((Date.now() + offsetMs - started) / 1000));
-    }, 500);
-    return () => clearInterval(t);
+    const started = Date.parse(cur.started_at);
+    const tick = () =>
+      setElapsed({
+        id: cur.id,
+        sec: Math.max(0, Math.floor((Date.now() + offsetMs - started) / 1000)),
+      });
+    const t0 = setTimeout(tick, 0);
+    const t = setInterval(tick, 500);
+    return () => {
+      clearTimeout(t0);
+      clearInterval(t);
+    };
   }, [s, active.data?.server_now]);
+  const elapsedSec = s && elapsed?.id === s.id ? elapsed.sec : 0;
 
   const start = useMutation({
     mutationFn: (qr: string) => api.post<SessionDto>('/api/student/sessions/start', { qr }),
@@ -60,7 +88,11 @@ export default function StudentHome() {
   const almostOver = !overLimit && leftSec < 15 * 60;
 
   return (
-    <ScrollView style={styles.wrap} contentContainerStyle={{ padding: 12 }}>
+    <ScrollView
+      style={styles.wrap}
+      contentContainerStyle={{ padding: 12 }}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
+    >
       <Card>
         <View style={styles.money}>
           <View style={{ flex: 1 }}>
@@ -78,7 +110,13 @@ export default function StudentHome() {
         </View>
       </Card>
 
-      {!s && (
+      {!s && active.isPending && (
+        <Card>
+          <ActivityIndicator color={colors.primary} />
+        </Card>
+      )}
+
+      {!s && !active.isPending && (
         <Card>
           <Text style={styles.hint}>Нет активной отработки</Text>
           <Button title="Начать отработку" onPress={() => setScanning(true)} />

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Alert, Image, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -10,7 +10,7 @@ import { Scanner } from '@/components/Scanner';
 import { Button, Card, ErrorText } from '@/components/ui';
 import { colors } from '@/theme';
 
-type Step = 'photo' | 'scan' | 'done';
+type Step = 'photo' | 'scan' | 'sending' | 'done';
 
 export default function FinishScreen() {
   const qc = useQueryClient();
@@ -19,7 +19,6 @@ export default function FinishScreen() {
   const [step, setStep] = useState<Step>('photo');
   const [photo, setPhoto] = useState<{ uri: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<SessionDto | null>(null);
 
   const shoot = async () => {
@@ -39,7 +38,7 @@ export default function FinishScreen() {
 
   const submit = async (qr: string) => {
     if (!photo) return;
-    setBusy(true);
+    setStep('sending');
     setErr(null);
     try {
       const fd = new FormData();
@@ -63,8 +62,6 @@ export default function FinishScreen() {
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Ошибка отправки');
       setStep('photo');
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -117,9 +114,10 @@ export default function FinishScreen() {
           )}
         </>
       )}
-      {busy && (
-        <View style={styles.overlay}>
-          <Text style={{ color: '#fff' }}>Отправка…</Text>
+      {step === 'sending' && (
+        <View style={styles.sending}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={{ color: '#fff', marginTop: 12 }}>Отправка…</Text>
         </View>
       )}
       <ErrorText>{err}</ErrorText>
@@ -143,15 +141,11 @@ const styles = StyleSheet.create({
     right: 24,
     flexDirection: 'row',
   },
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+  sending: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0008',
+    backgroundColor: '#000',
   },
   title: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   sub: { fontSize: 14, color: colors.muted, textAlign: 'center', marginTop: 8 },

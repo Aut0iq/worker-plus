@@ -47,19 +47,20 @@ pub fn test_config(tmp: &TempDir) -> Config {
     }
 }
 
-pub async fn make_app(pool: PgPool, now: DateTime<Utc>) -> TestApp {
+pub async fn make_app_with(
+    pool: PgPool,
+    now: DateTime<Utc>,
+    configure: impl FnOnce(&mut Config),
+) -> TestApp {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("prila_server=error")
         .try_init();
     let tmp = TempDir::new().unwrap();
     let clock = MockClock::new(now);
     let clock_dyn: Arc<dyn prila_server::clock::Clock> = clock.clone();
-    let state = AppState::new_test(
-        pool,
-        test_config(&tmp),
-        clock_dyn,
-        Some(&tmp.path().join("logs")),
-    );
+    let mut config = test_config(&tmp);
+    configure(&mut config);
+    let state = AppState::new_test(pool, config, clock_dyn, Some(&tmp.path().join("logs")));
     let app = prila_server::build_app(state.clone());
     TestApp {
         app,
@@ -67,6 +68,10 @@ pub async fn make_app(pool: PgPool, now: DateTime<Utc>) -> TestApp {
         clock,
         tmp,
     }
+}
+
+pub async fn make_app(pool: PgPool, now: DateTime<Utc>) -> TestApp {
+    make_app_with(pool, now, |_| {}).await
 }
 
 pub async fn create_group(pool: &PgPool, name: &str) -> Uuid {

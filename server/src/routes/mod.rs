@@ -29,7 +29,10 @@ pub async fn public_config(
     }))
 }
 
-/// Client IP extracted from ConnectInfo (if present).
+/// Client IP from ConnectInfo; when the server is behind a trusted proxy
+/// (TRUST_PROXY=true), the last X-Forwarded-For entry wins: Caddy, as the only
+/// trusted hop, appends the real client IP while earlier entries are
+/// client-controlled.
 pub struct ClientIp(pub Option<String>);
 
 impl FromRequestParts<AppState> for ClientIp {
@@ -37,8 +40,20 @@ impl FromRequestParts<AppState> for ClientIp {
 
     async fn from_request_parts(
         parts: &mut Parts,
-        _state: &AppState,
+        state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        if state.config.trust_proxy {
+            let last = parts
+                .headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.rsplit(',').next())
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            if let Some(ip) = last {
+                return Ok(ClientIp(Some(ip.to_string())));
+            }
+        }
         let ip = parts
             .extensions
             .get::<axum::extract::ConnectInfo<SocketAddr>>()

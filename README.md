@@ -2,9 +2,9 @@
 
 > Полная документация для передачи проекта (ТЗ, решения, статус, задачи): [docs/HANDOFF.md](docs/HANDOFF.md)
 
-Серверная часть (фаза 1): REST API на Rust (axum + sqlx/Postgres) для учёта
-часов отработки студентов общежития. Далее: админ-панель React (`admin/`,
-фаза 2) и мобильное приложение Expo (`mobile/`, фаза 3).
+Учёт часов отработки студентов общежития: REST API на Rust (axum + sqlx/Postgres,
+`server/`), веб-панель администратора React (`admin/`) и мобильное приложение Expo
+для студентов, комендантов и преподавателей (`mobile/`, см. [mobile/README.md](mobile/README.md)).
 
 ## Роли
 
@@ -69,6 +69,8 @@ cargo run                   # миграции и первый админ соз
 | `EXPO_PUSH_URL` | `https://exp.host/--/api/v2/push/send` | endpoint Expo push |
 | `CORS_ORIGINS` | `*` | список origin через запятую или `*` |
 | `MAX_SESSION_HOURS` | `4` | лимит реального времени сессии (без коэффициента) |
+| `TRUST_PROXY` | `false` | брать IP клиента из последнего `X-Forwarded-For` (только за Caddy, вместе с `PORT=127.0.0.1:8080`) |
+| `DOMAIN` | — | домен для профиля `https` (Caddy) |
 
 ## Модель данных (кратко)
 

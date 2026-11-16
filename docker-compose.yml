@@ -37,6 +37,7 @@ services:
       EXPO_PUSH_URL: ${EXPO_PUSH_URL:-https://exp.host/--/api/v2/push/send}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
       MAX_SESSION_HOURS: ${MAX_SESSION_HOURS:-4}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
     ports:
       - "${PORT:-8080}:8080"
     volumes:

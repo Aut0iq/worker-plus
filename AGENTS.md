@@ -1,67 +1,48 @@
 # AGENTS.md
 
+Full project context (spec, decisions, status, test server, TODO): `docs/HANDOFF.md`.
+
 ## Build / test / run
 
 ```bash
 cd server
-cargo build                 # build
-cargo clippy -- -D warnings # lint (must stay clean)
-cargo test                  # unit + integration tests; also re-exports TS DTOs to shared/api-types/
-cargo run                   # run server (reads .env in server/)
+cargo build                                 # build
+cargo clippy --all-targets -- -D warnings   # lint (must stay clean)
+cargo test                                  # unit + integration; also re-exports TS DTOs to shared/api-types/
+cargo run                                   # run server (reads .env in server/)
+
+cd admin && npm ci && npm run build && npm run lint      # admin (build runs sync-types)
+cd mobile && npm ci && npm run typecheck && npm run lint && npm test
+cd mobile && npx expo start --lan                         # dev server for Expo Go
 ```
 
 Integration tests use `#[sqlx::test]` — each test gets a fresh database, so the
-`DATABASE_URL` user needs CREATEDB. With dev-db.sh (trust auth, user `prila`
-is the cluster superuser) this works out of the box:
+`DATABASE_URL` user needs CREATEDB (the `postgres:16` image user is superuser).
+
+After changing DTOs: `cargo test` (regenerates `shared/api-types`), then
+`npm run sync-types` in admin/ and mobile/, and commit all three — CI fails if
+`shared/api-types` is stale.
+
+## Docker / deploy
 
 ```bash
-export DATABASE_URL=postgres://prila@127.0.0.1:5433/prila
+docker compose up -d --build                  # postgres:16 + server (serves admin)
+docker compose --profile https up -d          # + Caddy HTTPS (DOMAIN in .env)
+scripts/backup.sh /var/backups/prila          # pg_dump + photos
 ```
 
-## Dev Postgres (no root, no docker)
+## Current dev machine (Windows, B:\worker-plus)
 
-```bash
-scripts/dev-db.sh install   # one-time: fetch zonky embedded postgres 16 -> .devdb/
-scripts/dev-db.sh start     # 127.0.0.1:5433, db=prila, user=prila, trust auth
-scripts/dev-db.sh stop|status
-```
-
-## Docker
-
-```bash
-docker compose up --build   # postgres:16 + server (multi-stage Dockerfile)
-docker compose config       # validate
-```
-
-## Environment notes (how this workspace was built)
-
-This machine's WSL has **no outbound network** (DNS + TCP dead) and no gcc,
-curl, pip or docker access. Everything was installed from files downloaded
-through the Windows host:
-
-- **Rust**: standalone dist tarball `rust-1.99.0-x86_64-unknown-linux-gnu.tar.xz`
-  (+ clippy, rustfmt components) -> `~/toolchains/rust`. On PATH via `~/prila-env.sh`.
-- **C toolchain** (linker for cargo): Debian debs extracted into `~/sysroot`
-  (`dpkg -x`), wrapper scripts `~/bin/{ccwrap,arwrap,ranlibwrap}` (symlinked as
-  `~/bin/{cc,gcc,ar,ranlib}`) call the extracted gcc-14/binutils with `--sysroot`.
-  On PATH via `~/prila-env.sh`.
-- **Cargo registry**: crates were fetched on Windows (rustup cargo) and the
-  registry cache copied to `~/.cargo/registry`; `CARGO_NET_OFFLINE=true` is set in
-  `~/prila-env.sh`. To add deps: edit Cargo.toml, run `cargo fetch` with the
-  Windows cargo (`/mnt/c/Users/Flayzer/.cargo/bin/cargo.exe`), then re-copy new
-  `.crate` files + index entries from `C:\Users\Flayzer\.cargo\registry` to
-  `~/.cargo/registry`.
-- **Postgres 16**: zonky embedded binaries jar unpacked into `~/.devdb/`
-  (`PG_HOME`; data dir must live on the Linux fs — /mnt/c breaks initdb
-  permissions), `initdb` + `pg_ctl` per `scripts/dev-db.sh`. The bundle has no
-  `psql`; a Debian `postgresql-client-17` is extracted to `~/pgclient` —
-  `LD_LIBRARY_PATH=~/pgclient/usr/lib/x86_64-linux-gnu
-  ~/pgclient/usr/lib/postgresql/17/bin/psql -h 127.0.0.1 -p 5433 -U prila prila`.
-- `CARGO_TARGET_DIR=/home/aut0iq/prila-target` (build on the Linux fs — /mnt/c is slow).
-
-```bash
-source ~/prila-env.sh   # rust + cc wrapper + offline cargo + target dir
-```
+- No local Rust / Postgres. Rust is built and tested on the test-server LXC
+  (CT 123, 192.168.31.63, via `ssh root@192.168.31.110` + `pct exec 123`):
+  dev copy `/root/dev/worker-plus` (sync with `tar ... | tar --no-same-owner -x`),
+  `docker run --rm --network worker-plus_default -v wp-cargo-reg:/usr/local/cargo/registry
+  -v wp-cargo-target:/target -e CARGO_TARGET_DIR=/target ... rust:1 cargo test`
+  with `DATABASE_URL=postgres://prila:<DB_PASSWORD>@db:5432/prila`.
+- Test stack: `/opt/worker-plus` on CT 123 → `git pull && docker compose up -d --build`.
+- Scheduled task "worker-plus autopush" commits (`new changes`) and pushes every 5 min.
+- Old-PC tooling (`scripts/dev-db.sh`, offline cargo in WSL) is only needed on a
+  machine without Docker/network.
 
 ## Conventions
 
@@ -71,19 +52,7 @@ source ~/prila-env.sh   # rust + cc wrapper + offline cargo + target dir
   inside the same transaction; komendant actions additionally via
   `state.komendant_log(...)`.
 - Money mutations run inside one DB transaction with `SELECT ... FOR UPDATE`.
-
-## Project status / next steps
-
-- Done: Rust server (`server/`, all endpoints, tests), admin web panel (`admin/`).
-- TODO: Expo (React Native, TypeScript) mobile app in `mobile/` for roles
-  student / komendant / teacher. Student: profile (debt/balance), scan QR to
-  start, finish = photo + QR scan, live timer, history, shop, orders,
-  notifications. Komendant: choose difficulty (light x1 / hard x2), rotating QR
-  (`POST /api/komendant/qr/open`, refresh `GET /api/komendant/qr` every ~10s),
-  confirm/reject pending sessions with photo. Teacher: groups -> students ->
-  assign hours. Push via Expo tokens (`POST /api/me/push-token`). Types: copy
-  `shared/api-types/*.ts` the same way as `admin/scripts/sync-types.mjs`.
-- Fresh machine (normal network): install Rust + PostgreSQL 16 (or
-  `docker compose up -d db`), copy `.env.example` to `server/.env` and fill it,
-  then `cd server && cargo run`; `cd admin && npm ci && npm run dev`
-  (http://localhost:5173, proxies `/api` to :8080).
+- Never edit an applied migration (not even line endings — sqlx checksums the bytes);
+  add a new `server/migrations/000N_*.sql`. All text files are LF (`.gitattributes`).
+- Commit messages: `new changes`, no assistant attribution.
+- UI text (admin, mobile) is Russian; hours display as `1ч 44м`.

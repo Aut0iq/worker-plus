@@ -750,3 +750,46 @@ async fn login_success_resets_attempt_counter(pool: PgPool) {
     .await;
     assert_eq!(st, StatusCode::OK);
 }
+
+async fn login_with_xff(app: &axum::Router, xff: &str) -> StatusCode {
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", xff)
+        .body(axum::body::Body::from(
+            serde_json::to_vec(&json!({"login": "stud1", "password": "wrong"})).unwrap(),
+        ))
+        .unwrap();
+    app.clone().oneshot(req).await.unwrap().status()
+}
+
+async fn last_login_failure_ip(pool: &PgPool) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT ip FROM audit_log WHERE action = 'login_failure' ORDER BY ts DESC LIMIT 1",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test]
+async fn xff_ignored_without_trust_proxy(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    create_user(&pool, "student", "stud1", "Студент", None).await;
+
+    let st = login_with_xff(&app.app, "203.0.113.7").await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    // no ConnectInfo in tests: ignoring XFF leaves ip NULL
+    assert_eq!(last_login_failure_ip(&pool).await, None);
+}
+
+#[sqlx::test]
+async fn xff_last_entry_used_with_trust_proxy(pool: PgPool) {
+    let app = make_app_with(pool.clone(), Utc::now(), |c| c.trust_proxy = true).await;
+    create_user(&pool, "student", "stud1", "Студент", None).await;
+
+    let st = login_with_xff(&app.app, "1.1.1.1, 203.0.113.7").await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    assert_eq!(last_login_failure_ip(&pool).await.as_deref(), Some("203.0.113.7"));
+}

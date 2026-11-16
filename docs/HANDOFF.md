@@ -84,11 +84,20 @@
 │   ├── src/pages/             Login, Dashboard, Users, Groups, Sessions, Shop, Summaries, Logs
 │   ├── src/components/        AppLayout, HoursInput, UserSelect, NotifyBell
 │   └── scripts/sync-types.mjs копирует shared/api-types → src/api/types
-├── shared/api-types/    TS-типы DTO, генерируются из Rust (ts-rs) при `cargo test`
+├── mobile/              приложение Expo SDK 58 (expo-router, TS strict, react-query)
+│   ├── src/app/               экраны: login, (student)/, (komendant)/, (teacher)/, finish, qr, group/[id], student/[id]
+│   ├── src/api/               client.ts (JWT из SecureStore, ошибки, 401 → вход) + types/ (копия shared/api-types)
+│   ├── src/screens/           общие Notifications / Profile
+│   ├── src/components/        Scanner (QR), AuthImage, ui
+│   └── src/auth.tsx, push.ts, format.ts (+ format.test.ts), labels.ts, theme.ts
+├── shared/api-types/    TS-типы DTO, генерируются из Rust (ts-rs) при `cargo test` (i64 → number через TS_RS_LARGE_INT)
 ├── scripts/dev-db.sh    локальный Postgres без root (для машины без Docker)
-├── docker-compose.yml   postgres:16 + server
+├── scripts/backup.sh    бэкап БД (pg_dump) + фото из docker compose
+├── docker-compose.yml   postgres:16 + server (+ caddy в профиле `https`)
+├── Caddyfile            HTTPS reverse proxy для VPS
+├── .github/workflows/ci.yml  CI: server (clippy, test с Postgres, проверка типов), admin, mobile
 ├── .env.example         все переменные окружения
-└── mobile/              ❌ ЕЩЁ НЕ СОЗДАН (см. раздел 6)
+└── .gitattributes       все текстовые файлы — LF (важно для контрольных сумм миграций)
 ```
 
 Поток данных: мобилка и админка → REST `/api/*` (JSON, `Authorization: Bearer <jwt>`)
@@ -181,14 +190,34 @@
 - Все эндпоинты из README, все правила раздела 4.
 - `GET /api/health`, `GET /api/config` → `{timezone, max_session_hours}` для клиентов.
 - Первый админ создаётся при старте из `ADMIN_LOGIN`/`ADMIN_PASSWORD`.
-- Тесты: **50 unit + 12 интеграционных**, `cargo clippy --all-targets -- -D warnings` чисто.
+- Тесты: **50 unit + интеграционные (`tests/flows.rs`)**, `cargo clippy --all-targets -- -D warnings` чисто.
   Покрыто: округление (вкл. 1ч43м31с→104), коэффициенты, распределение, откат,
   QR (подпись/окна/подделка), полный поток, чужой QR на финише, истечение > 4 ч
   (и при финише, и фоновой задачей), откат по фото, магазин (нехватка баланса,
   покупка, отмена с возвратом), сводка + валидный xlsx, догоняющая генерация сводки,
-  журналы коменданта, ограничения ролей, импорт CSV, аудит неудачного входа.
-- Dockerfile + docker-compose — **конфиг валиден, но реально не запускались**
-  (на машине разработки не было доступа к Docker).
+  журналы коменданта, ограничения ролей, импорт CSV, аудит неудачного входа,
+  rate limit входа, `TRUST_PROXY` / X-Forwarded-For.
+- **Rate limit входа**: 10 неудачных попыток за 15 мин по ключу `ip|login` → 429
+  `too_many_attempts` + аудит `login_blocked` (в памяти процесса).
+- **TRUST_PROXY=true** — IP клиента берётся из последнего элемента `X-Forwarded-For`
+  (включать только за Caddy и с `PORT=127.0.0.1:8080`).
+- Типы TS: i64 → `number` (`TS_RS_LARGE_INT` в `server/.cargo/config.toml`).
+- Docker: `docker compose up --build` **проверен** на тестовом сервере (сборка ≈13 мин на 2 ядрах).
+  HTTPS: профиль `https` (Caddy, Let's Encrypt). Бэкапы: `scripts/backup.sh` (проверен).
+
+### 5.1a Тестовый сервер (локальная сеть заказчика)
+- Proxmox `192.168.31.110` → LXC **123 `worker-plus`** (Debian 13, 2 ядра / 4 ГБ / 20 ГБ,
+  unprivileged, nesting), IP **192.168.31.63**, автозапуск.
+- Docker CE + compose, стек в `/opt/worker-plus` (`git pull && docker compose up -d --build`),
+  секреты в `/opt/worker-plus/.env` (chmod 600). API/админка: http://192.168.31.63:8080.
+- Сборочная копия для тестов Rust: `/root/dev/worker-plus` (контейнер `rust:1`, сеть
+  `worker-plus_default`, volume-кэши `wp-cargo-reg`, `wp-cargo-target`).
+- Тестовые пользователи: admin, teacher1, komendant1, student1–3 (группа ИС-21),
+  награда «Тестовая награда» (60 мин). Пароли выданы заказчику в чате.
+- ⚠️ Инцидент: перевод репозитория на LF изменил байты `0001_init.sql`, и sqlx отказался
+  стартовать (`VersionMismatch(1)`) на БД, где миграция уже применена. На тестовом сервере
+  контрольная сумма в `_sqlx_migrations` обновлена вручную. **Никогда не меняйте уже
+  применённые миграции** (даже перевод строк) — только новые файлы `000N_*.sql`.
 
 ### 5.2 Веб-панель — ✅ готова (сборка и lint проходят)
 Страницы (всё на русском, время в часовом поясе из `/api/config`):
@@ -206,72 +235,57 @@
 (создание группы, преподавателя, коменданта, студентов, награды, полный цикл
 сессии); раздача собранной админки сервером (`STATIC_DIR`) с SPA-fallback.
 
-> Примечание: код админки проверен сборкой/линтом и smoke-тестом, но **детального
-> код-ревью и ручного прохода по UI ещё не было** — стоит сделать.
+Код-ревью проведено: исправлены коды действий в журналах (метки не совпадали с тем, что
+пишет сервер), колонка «Студент» в журнале коменданта (`student_name` в DTO), сброс
+страницы при смене фильтров, утечка object URL фото. `npm audit`: 9 moderate остаются —
+нужен переход react-router 6→7 (breaking), не делали.
+Ручного прохода по UI админки всё ещё не было.
 
-### 5.3 GitHub
-Репозиторий `Aut0iq/worker-plus` (public). На старом ПК работала автоотправка раз
-в 5 минут (`C:\Users\Flayzer\tools\autopush.ps1`) — **остановлена**.
+### 5.3 Мобильное приложение — ✅ готово (`mobile/`, Expo SDK 58)
+- Вход (адрес сервера настраивается на экране входа), роль → свои вкладки.
+- **Студент**: долг/баланс, старт по QR, живой таймер по серверному времени с
+  предупреждением о лимите, завершение = фото (сжатие 1600px) + QR того же коменданта,
+  ожидание подтверждения, история, магазин + мои заказы, уведомления, профиль
+  (назначения, смена пароля, выход).
+- **Комендант**: выбор сложности → полноэкранный QR (обновление 10 с, экран не гаснет),
+  «Ждут подтверждения» с фото → Подтвердить / Отклонить с причиной, «Сейчас работают», история.
+- **Преподаватель** (и admin): группы → студенты → карточка → «Назначить часы».
+- Push: регистрация токена только в dev/EAS-сборке с `extra.eas.projectId`
+  (в Expo Go удалённых push нет); лента уведомлений работает везде (опрос 30 с).
+- Проверено: `npm run typecheck`, `npm run lint`, `npm test`, `npx expo-doctor`,
+  `npx expo export` (android/ios); API-сценарий целиком прогнан на тестовом сервере.
+  **На реальном телефоне ещё не проверялось** — запуск: `cd mobile && npx expo start --lan`,
+  открыть в Expo Go.
+
+### 5.4 GitHub / автоотправка
+Репозиторий `Aut0iq/worker-plus` (public). На текущем ПК задача планировщика
+«worker-plus autopush» каждые 5 мин коммитит (`new changes`) и пушит `B:\worker-plus`
+(`C:\Users\AUT0IQ\tools\autopush.ps1`, запуск `conhost --headless`, авторизация через `gh`).
+Побочный эффект: в CI попадают промежуточные состояния — красный прогон посреди работы нормален.
+CI: `.github/workflows/ci.yml` (server: clippy + test с Postgres + проверка, что
+`shared/api-types` закоммичены; admin: build + lint; mobile: typecheck + lint + test).
 
 ---
 
 ## 6. Что осталось сделать
 
-### 6.1 Мобильное приложение (`mobile/`) — главная оставшаяся задача
-Стек: Expo (последний стабильный SDK), TypeScript strict, expo-router, @tanstack/react-query.
-Рекомендуемые модули: `expo-camera` (CameraView со сканированием QR + съёмка фото),
-`react-native-qrcode-svg` (+ `react-native-svg`) для показа QR коменданта,
-`expo-notifications` (push-токен → `POST /api/me/push-token`, при выходе — `DELETE`),
-`expo-secure-store` (JWT), `expo-image-manipulator` (сжатие фото перед отправкой).
-Адрес сервера — через `app.config` / `EXPO_PUBLIC_API_URL`.
-Типы — копировать `shared/api-types` как в `admin/scripts/sync-types.mjs`.
-Язык интерфейса — русский. Формат часов — `1ч 44м`.
+### 6.1 Проверить на устройствах
+- [ ] Ручной проход мобильного приложения на реальных телефонах (Android + iOS) через Expo Go:
+      полный цикл студент ↔ комендант, магазин, назначение часов.
+- [ ] Ручной проход по UI админки.
 
-Экраны по ролям (роль берётся из `GET /api/me` после входа):
+### 6.2 Перед продакшеном
+- [ ] VPS: `docker compose --profile https up -d` с `DOMAIN`, `TRUST_PROXY=true`,
+      `PORT=127.0.0.1:8080`; cron для `scripts/backup.sh`; политика хранения фото.
+- [ ] Сборка приложения через EAS (`eas build`): завести EAS-проект, прописать
+      `extra.eas.projectId`, включить `EXPO_PUSH_ENABLED=true` на сервере; для https-сервера
+      убрать `usesCleartextTraffic` и задать `EXPO_PUBLIC_API_URL`.
+- [ ] Иконки/сплэш приложения (сейчас шаблонные Expo).
 
-**Студент**
-- Профиль: ФИО, группа, **долг**, **баланс**, история назначений.
-- «Начать отработку»: сканер QR → `start`. Экран активной сессии: таймер от
-  `started_at` с поправкой на `server_now` из `GET /api/student/sessions/active`,
-  сложность, комендант, предупреждение о лимите 4 ч.
-- «Завершить»: сделать фото → сканировать QR того же коменданта → `finish`
-  (multipart). Затем статус «ожидает подтверждения коменданта».
-- История отработок (статусы, длительность, округлено, зачтено, проверка фото).
-- Магазин наград (картинки через авторизованный `GET /api/rewards/{id}/image`),
-  покупка, мои заказы.
-- Уведомления.
-
-**Комендант**
-- Выбор сложности: Лёгкие ×1 / Сложные ×2 → полноэкранный QR
-  (`qr/open`, затем `GET /api/komendant/qr` каждые ~10 с, экран не гаснет —
-  `expo-keep-awake`).
-- Список «Сейчас работают» (`status=active`) и «Ждут подтверждения»
-  (`pending_confirmation`) с фото (`GET /api/komendant/sessions/{id}/photo`) →
-  Подтвердить / Отклонить (с причиной).
-- История, уведомления (особенно об истёкших сессиях).
-
-**Преподаватель**
-- Группы → студенты (долг/баланс) → карточка студента → «Назначить часы»
-  (часы + минуты + причина).
-
-Общее: вход, смена пароля, выход, обработка `{error:{code,message}}`, 401 → вход.
-Проверка: `npx tsc --noEmit`, `npx expo-doctor`, запуск в Expo Go; для push нужен
-EAS project id и `EXPO_PUSH_ENABLED=true` на сервере.
-
-### 6.2 Доработки и долги
-- [ ] **Типы i64 → `bigint`**: ts-rs генерирует `bigint` для полей минут/секунд,
-      но в JSON приходят обычные числа. Исправить на сервере (`#[ts(type = "number")]`
-      на i64-полях DTO или глобальная настройка ts-rs), перегенерировать
-      `shared/api-types` (`cargo test`), упростить `admin/src/format.ts`.
-- [ ] Проверить `docker compose up --build` на машине с Docker; настроить HTTPS
-      (reverse proxy: Caddy/nginx) для VPS.
-- [ ] Код-ревью и ручной проход по админке.
-- [ ] `npm audit` в `admin/` (было 9 moderate).
-- [ ] Ограничение частоты попыток входа (rate limit) на `/api/auth/login`.
-- [ ] Бэкапы PostgreSQL и папки фото на VPS; политика хранения фото.
-- [ ] CI (GitHub Actions): `cargo clippy`, `cargo test` с Postgres-сервисом,
-      `npm run build`/`lint` для admin (и mobile).
-- [ ] Возможно: отдельная группа преподавателя (сейчас преподаватель видит все группы).
+### 6.3 Доработки (необязательно)
+- [ ] `npm audit` в admin: 9 moderate, исправление = react-router 7 (breaking).
+- [ ] Rate limit входа хранится в памяти — при нескольких экземплярах сервера вынести в БД/Redis.
+- [ ] Отдельные группы преподавателя (сейчас преподаватель видит все группы).
 
 ---
 
@@ -300,12 +314,17 @@ cd ../admin
 npm ci
 npm run dev                     # http://localhost:5173, /api проксируется на :8080
 npm run build && npm run lint
+
+# Мобильное приложение
+cd ../mobile
+npm ci
+npx expo start --lan            # открыть в Expo Go; адрес API — EXPO_PUBLIC_API_URL или поле на экране входа
+npm run typecheck && npm run lint && npm test
 ```
 
 Полный прод-запуск: `docker compose up --build -d` (сервер раздаёт админку).
 
-Тестовые данные (логины `teacher1`, `komendant1`, `student1`…) были только в
-локальной БД старого ПК — на новом ПК создайте пользователей через админку или импорт.
+Тестовые данные есть на тестовом сервере (раздел 5.1a); на новой БД создайте пользователей через админку или импорт.
 
 > Раздел «Environment» в `AGENTS.md` описывает обходные пути старого ПК (WSL без
 > сети, `~/prila-env.sh`, `scripts/dev-db.sh`, офлайн-cargo). На нормальной машине
@@ -315,17 +334,11 @@ npm run build && npm run lint
 
 ## 8. Промпт для новой сессии Devin / другого чата
 
-Передать чат как есть в другую сессию нельзя, но весь контекст собран в этом файле.
-Откройте склонированный репозиторий в Devin на новом ПК и отправьте:
-
 ```
 Продолжаем проект из этого репозитория (учёт отработок студентов: Rust-сервер,
 React-админка, мобильное приложение Expo). Сначала внимательно прочитай
-docs/HANDOFF.md, README.md и AGENTS.md — там исходное ТЗ, все решения заказчика,
-бизнес-правила, текущий статус и список задач. Сервер и админка готовы.
-Следующая задача — раздел 6.1: создать мобильное приложение в mobile/
-(Expo, TypeScript) для ролей студент/комендант/преподаватель по описанию.
-Также по возможности закрой пункты 6.2 (начни с исправления типов i64→number).
-Перед реализацией настрой окружение (раздел 7), убедись что сервер запускается
-и тесты проходят. Задавай вопросы, если что-то неясно. Интерфейс — на русском.
+docs/HANDOFF.md, README.md и AGENTS.md — там исходное ТЗ, решения заказчика,
+бизнес-правила, текущий статус, тестовый сервер и список задач (раздел 6).
+Сервер, админка и мобильное приложение готовы; дальше — проверка на устройствах
+и подготовка к продакшену. Интерфейс — на русском. Не меняй уже применённые миграции.
 ```
