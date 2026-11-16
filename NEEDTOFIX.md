@@ -183,17 +183,18 @@ projectId не задан → `registerForPushNotificationsAsync` не вызы�
 
 # Аудит кода 2026-11-17
 
-Прочитано: весь `server/src`, миграция `0001_init.sql`, основные страницы/экраны
-admin и mobile, CI, docker-compose, backup.sh. Не читал: `clock.rs`,
-`mobile/src/components/ui.tsx`, `labels.ts` мобилки, `_layout`-обёртки,
-`tests/` целиком, `dev-db.sh`.
+Прочитано: весь `server/src`, `server/tests/` (flows.rs, common), миграция
+`0001_init.sql`, основные страницы/экраны admin и mobile, CI, docker-compose,
+backup.sh. Не читал: `clock.rs`, `mobile/src/components/ui.tsx`,
+`labels.ts` мобилки, `_layout`-обёртки, `dev-db.sh`.
 
 ## Баги и потеря данных
 
-1. **Двойной старт сессии → 500 вместо «сессия уже есть».**
+1. **Гонка двойного старта сессии → 500 вместо «сессия уже есть».**
    `student.rs` start_session: проверка `open` и `INSERT` — check-then-insert.
-   Два параллельных запроса (двойной тап, повтор после «нет связи», когда
-   первый запрос на самом деле дошёл) → второй упирается в уникальный
+   Последовательный дубль уже отдаёт 409 (тест `full_flow_…`, flows.rs:66-75),
+   но два действительно параллельных запроса (двойной тап, повтор после
+   «нет связи», когда первый запрос дошёл) → второй упирается в уникальный
    индекс `work_sessions_one_open` → sqlx error → `internal` 500.
    **Сделать:** отловить `is_unique_violation` при INSERT → `conflict
    session_exists` (как уже сделано для `login_taken` в create_user).
@@ -311,3 +312,26 @@ admin и mobile, CI, docker-compose, backup.sh. Не читал: `clock.rs`,
     таблицы audit_log/komendant_log/notifications и log-файлы растут без
     retention; argon2 не вызывается при несуществующем логине → перебор
     логинов по времени ответа.
+
+## Пробелы в тестах (server/tests/flows.rs — 13 интеграционных)
+
+Рискованные пути без покрытия (выше — баги, которые тест бы поймал):
+
+- **`adjust_user`** (админская ручная правка долга/баланса) — денежная
+  мутация без единого теста: ни happy-path, ни отрицательные дельты, ни
+  переполнение. То же `assign_hours` с `minutes <= 0` и огромными значениями.
+- **photo-review approve** — покрыт только reject; approve-ветку
+  (начисление остаётся, статус меняется) никто не проверяет.
+- **Комендант подтверждает/отклоняет чужую или не-pending сессию** —
+  комментарий в `role_restrictions` (flows.rs:449) говорит «covered
+  implicitly», но проверки нет: статусную машину ломать некому.
+- **finish без фото / битый multipart / фото > лимита** — все вызовы
+  `finish_session` в тестах шлют валидный multipart; маскировка ошибок
+  из п.2 тестом не поймана.
+- **`delete_reward` с существующими заказами** — п.3 воспроизводится
+  одним тестом в 10 строк.
+- **Self-role change и сброс пароля** (п.6, п.10) — нет.
+- Покрыто хорошо: полный цикл start→finish→confirm с долгом, expiry,
+  reject, возврат при photo-reject, покупка/выдача/отмена награды, аудит-
+  и комендант-логи, роли, QR-mismatch, сводки+XLSX, импорт CSV, rate-limit
+  и XFF.
