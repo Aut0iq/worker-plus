@@ -44,6 +44,7 @@ pub fn test_config(tmp: &TempDir) -> Config {
         expo_push_url: "http://127.0.0.1:1/unreachable".into(),
         cors_origins: "*".into(),
         max_session_hours: 4,
+        trust_proxy: false,
     }
 }
 
