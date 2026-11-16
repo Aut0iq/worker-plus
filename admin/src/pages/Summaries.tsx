@@ -1,4 +1,4 @@
-import { Button, DatePicker, Drawer, Modal, Space, Table, Typography, message } from 'antd';
+import { Button, DatePicker, Drawer, Modal, Table, Typography, message } from 'antd';
 import { DownloadOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -50,13 +50,11 @@ export default function SummariesPage() {
         const existing = items.find((s) => s.year === d!.year() && s.month === d!.month() + 1);
         const doIt = () => generate.mutateAsync({ year: d!.year(), month: d!.month() + 1 });
         if (!existing) return doIt();
-        return new Promise<void>((resolve, reject) =>
-          Modal.confirm({
-            title: 'Заменить существующую сводку?',
-            onOk: () => doIt().then(resolve).catch(reject),
-            onCancel: reject,
-          }),
-        );
+        Modal.confirm({
+          title: 'Заменить существующую сводку?',
+          onOk: () => doIt(),
+        });
+        return Promise.resolve();
       },
     });
   };

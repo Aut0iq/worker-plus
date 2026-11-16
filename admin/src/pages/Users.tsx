@@ -16,7 +16,7 @@ import {
 import { DownloadOutlined, UploadOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, downloadFile } from '../api/client';
+import { api } from '../api/client';
 import { fmtMinutes, fmtTs } from '../format';
 import { roleLabels, sessionStatusLabels } from '../labels';
 import { HoursInput } from '../components/HoursInput';
