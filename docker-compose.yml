@@ -43,7 +43,26 @@ services:
       - photos:/data/photos
       - logs:/data/logs
 
+  # HTTPS for a VPS: set DOMAIN in .env, then `docker compose --profile https up -d`
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    restart: unless-stopped
+    depends_on:
+      - server
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   db-data:
   photos:
   logs:
+  caddy-data:
+  caddy-config:

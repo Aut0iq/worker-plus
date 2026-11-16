@@ -1372,11 +1372,14 @@ async fn komendant_log(
         #[sqlx(flatten)]
         l: KomendantLogEntry,
         komendant_name: Option<String>,
+        student_name: Option<String>,
     }
 
     let items = bind_f!(sqlx::query_as::<_, KomRow>(sqlx::AssertSqlSafe(format!(
-        "SELECT l.*, u.full_name AS komendant_name FROM komendant_log l
+        "SELECT l.*, u.full_name AS komendant_name, s.full_name AS student_name
+         FROM komendant_log l
          LEFT JOIN users u ON u.id = l.komendant_id
+         LEFT JOIN users s ON s.id = l.student_id
          WHERE {cond} ORDER BY l.ts DESC LIMIT ${} OFFSET ${}",
         n + 1,
         n + 2
@@ -1395,6 +1398,7 @@ async fn komendant_log(
                 komendant_name: r.komendant_name,
                 action: r.l.action,
                 student_id: r.l.student_id,
+                student_name: r.student_name,
                 session_id: r.l.session_id,
                 details: r.l.details,
             })

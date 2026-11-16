@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Dayjs } from 'dayjs';
 import { api } from '../api/client';
 import { fmtTs } from '../format';
-import { actionLabel, actionLabels, roleLabels } from '../labels';
+import { actionLabel, auditActionLabels, roleLabels } from '../labels';
 import { UserSelect } from '../components/UserSelect';
 import type { Paginated } from '../api/types/Paginated';
 import type { AuditEntryDto } from '../api/types/AuditEntryDto';
@@ -63,7 +63,7 @@ function AuditLog({ auto }: { auto: boolean }) {
           placeholder="Действие"
           style={{ width: 240 }}
           onChange={(v) => { setPage(1); setAction(v); }}
-          options={Object.entries(actionLabels).map(([v, l]) => ({ value: v, label: l }))}
+          options={Object.entries(auditActionLabels).map(([v, l]) => ({ value: v, label: l }))}
         />
         <RangePicker showTime onChange={(v) => { setPage(1); setRange(v); }} />
       </Space>
@@ -118,10 +118,7 @@ function KomLog({ auto }: { auto: boolean }) {
           { title: 'Время', render: (_, e) => fmtTs(e.ts), width: 170 },
           { title: 'Комендант', dataIndex: 'komendant_name' },
           { title: 'Действие', render: (_, e) => <Tag>{actionLabel(e.action)}</Tag> },
-          {
-            title: 'Студент',
-            render: (_, e) => (e.details as { student_name?: string })?.student_name ?? '—',
-          },
+          { title: 'Студент', render: (_, e) => e.student_name ?? '—' },
           { title: 'Детали', render: (_, e) => detailsCell(e.details) },
         ]}
       />

@@ -25,6 +25,23 @@ docker compose up --build
 
 API слушает `http://localhost:8080`, Postgres — `postgres:16`.
 
+### HTTPS на VPS
+
+Указать `DOMAIN=prila.example.com` в `.env` (A-запись домена → IP VPS, порты 80/443
+открыты) и запустить `docker compose --profile https up -d` — Caddy сам получит
+сертификат Let's Encrypt и проксирует на сервер (`Caddyfile`).
+
+### Бэкапы
+
+`scripts/backup.sh [каталог]` — `pg_dump` базы и архив фото (по умолчанию `./backups`,
+хранит `KEEP_DAYS=14` дней). Cron на VPS:
+`0 3 * * * cd /opt/worker-plus && scripts/backup.sh /var/backups/prila >> /var/log/prila-backup.log 2>&1`.
+Восстановление:
+```bash
+docker compose exec -T db pg_restore -U prila -d prila --clean --if-exists < db-XXXX.dump
+docker compose exec -T server tar -C /data -xzf - < photos-XXXX.tar.gz
+```
+
 ## Локальная разработка
 
 ```bash

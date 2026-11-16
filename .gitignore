@@ -10,6 +10,7 @@ vendor/
 .devdb/
 logs/
 photos/
+backups/
 .env.*
 !.env.example
 server/serde_json/

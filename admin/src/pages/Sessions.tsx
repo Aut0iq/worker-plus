@@ -62,14 +62,14 @@ function SessionList() {
           allowClear
           placeholder="Статус"
           style={{ width: 210 }}
-          onChange={f.setStatus}
+          onChange={(v) => { setPage(1); f.setStatus(v); }}
           options={Object.entries(sessionStatusLabels).map(([v, x]) => ({ value: v, label: x.label }))}
         />
         <Select
           allowClear
           placeholder="Проверка фото"
           style={{ width: 160 }}
-          onChange={f.setReview}
+          onChange={(v) => { setPage(1); f.setReview(v); }}
           options={Object.entries(photoReviewLabels).map(([v, x]) => ({ value: v, label: x.label }))}
         />
         <UserSelect role="student" value={f.student} onChange={(v) => { setPage(1); f.setStudent(v); }} placeholder="Студент" />
@@ -188,12 +188,20 @@ function ReviewDrawer({
     setPhotoUrl(undefined);
     if (!session?.has_photo) return;
     let alive = true;
+    let url: string | undefined;
     downloadBlob(`/api/admin/sessions/${session.id}/photo`)
-      .then((u) => alive && setPhotoUrl(u))
+      .then((u) => {
+        if (alive) {
+          url = u;
+          setPhotoUrl(u);
+        } else {
+          URL.revokeObjectURL(u);
+        }
+      })
       .catch((e) => msg.error(e.message));
     return () => {
       alive = false;
-      if (photoUrl) URL.revokeObjectURL(photoUrl);
+      if (url) URL.revokeObjectURL(url);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.id]);

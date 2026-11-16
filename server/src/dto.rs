@@ -343,6 +343,7 @@ pub struct KomendantLogEntryDto {
     pub komendant_name: Option<String>,
     pub action: String,
     pub student_id: Option<Uuid>,
+    pub student_name: Option<String>,
     pub session_id: Option<Uuid>,
     pub details: serde_json::Value,
 }

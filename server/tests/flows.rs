@@ -401,6 +401,25 @@ async fn audit_and_komendant_logs_written(pool: PgPool) {
     ] {
         assert!(kom_actions.iter().any(|x| x == a), "missing komendant log {a}");
     }
+
+    // the admin view joins the student name
+    let tok_admin = login(&app.app, "admin1").await;
+    let (st, v) = call(
+        &app.app,
+        "GET",
+        "/api/admin/komendant-log?per_page=50",
+        Some(&tok_admin),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let started = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["action"] == "session_started")
+        .expect("session_started entry");
+    assert_eq!(started["student_name"], "Студент Иван");
     let _ = kom;
 }
 
