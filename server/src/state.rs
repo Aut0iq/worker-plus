@@ -13,14 +13,16 @@ use crate::clock::{Clock, SystemClock};
 use crate::config::Config;
 use crate::error::{AppError, AppResult};
 
+/// Failed-login counter: key "ip|login" -> (failures, window start).
+pub type LoginAttemptMap = HashMap<String, (u32, DateTime<Utc>)>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
     pub clock: Arc<dyn Clock>,
     pub http: reqwest::Client,
-    /// Failed-login counter: key "ip|login" -> (failures, window start).
-    pub login_attempts: Arc<Mutex<HashMap<String, (u32, DateTime<Utc>)>>>,
+    pub login_attempts: Arc<Mutex<LoginAttemptMap>>,
     audit_file: Arc<Mutex<Option<NonBlocking>>>,
     komendant_file: Arc<Mutex<Option<NonBlocking>>>,
     _guard: Arc<Vec<WorkerGuard>>,

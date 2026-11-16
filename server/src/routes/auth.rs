@@ -1,9 +1,8 @@
 use axum::routing::post;
 use axum::{Json, Router};
 use axum::extract::State;
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::MutexGuard;
 
 use crate::auth::{encode_token, verify_password};
@@ -11,7 +10,7 @@ use crate::dto::{LoginRequest, LoginResponse};
 use crate::error::{AppError, AppResult};
 use crate::models::Role;
 use crate::rows::{UserRow, USER_SELECT};
-use crate::state::{AppState, AuditRecord};
+use crate::state::{AppState, AuditRecord, LoginAttemptMap};
 
 use super::ClientIp;
 
@@ -23,9 +22,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/auth/login", post(login))
 }
 
-fn lock_attempts(
-    state: &AppState,
-) -> MutexGuard<'_, HashMap<String, (u32, DateTime<Utc>)>> {
+fn lock_attempts(state: &AppState) -> MutexGuard<'_, LoginAttemptMap> {
     state.login_attempts.lock().unwrap_or_else(|e| e.into_inner())
 }
 
