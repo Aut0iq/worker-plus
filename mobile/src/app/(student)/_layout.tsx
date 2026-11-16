@@ -4,7 +4,10 @@ import { useAuth } from '@/auth';
 import { useUnreadCount } from '@/screens/NotificationsScreen';
 import { colors } from '@/theme';
 
-const icon = (e: string) => () => <Text style={{ fontSize: 20 }}>{e}</Text>;
+const icon = (e: string) =>
+  function TabIcon() {
+    return <Text style={{ fontSize: 20 }}>{e}</Text>;
+  };
 
 export default function StudentLayout() {
   const { user, ready } = useAuth();

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -26,19 +26,19 @@ export default function StudentHome() {
     refetchInterval: 15_000,
   });
 
-  // server clock offset, recomputed on every fetch of /active
-  const offset = useRef(0);
+  // elapsed seconds, recomputed every 500ms against the server clock
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const s = active.data?.session ?? null;
   useEffect(() => {
-    if (active.data?.server_now) {
-      offset.current = Date.parse(active.data.server_now) - Date.now();
-    }
-  }, [active.data?.server_now]);
-
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const serverNow = active.data?.server_now;
+    if (!s || s.status !== 'active' || !serverNow) return;
+    const offsetMs = Date.parse(serverNow) - Date.now();
+    const started = Date.parse(s.started_at);
+    const t = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() + offsetMs - started) / 1000));
+    }, 500);
     return () => clearInterval(t);
-  }, []);
+  }, [s, active.data?.server_now]);
 
   const start = useMutation({
     mutationFn: (qr: string) => api.post<SessionDto>('/api/student/sessions/start', { qr }),
@@ -54,9 +54,7 @@ export default function StudentHome() {
   });
 
   const u = me.data;
-  const s = active.data?.session ?? null;
   const maxHours = config?.max_session_hours ?? 4;
-  const elapsedSec = s ? Math.floor((now + offset.current - Date.parse(s.started_at)) / 1000) : 0;
   const leftSec = maxHours * 3600 - elapsedSec;
   const overLimit = leftSec <= 0;
   const almostOver = !overLimit && leftSec < 15 * 60;
