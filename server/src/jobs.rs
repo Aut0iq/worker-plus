@@ -1,0 +1,146 @@
+use chrono::Datelike;
+use serde_json::json;
+use std::time::Duration;
+use uuid::Uuid;
+
+use crate::error::AppResult;
+use crate::models::WorkSession;
+use crate::state::{AppState, AuditRecord};
+use crate::summaries;
+
+pub fn spawn_all(state: AppState) {
+    spawn_expiry_loop(state.clone());
+    spawn_summary_loop(state);
+}
+
+fn spawn_expiry_loop(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(e) = expire_overdue_sessions(&state).await {
+                tracing::error!(error = ?e, "session expiry job failed");
+            }
+        }
+    });
+}
+
+fn spawn_summary_loop(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            if let Err(e) = maybe_generate_monthly(&state).await {
+                tracing::error!(error = ?e, "monthly summary job failed");
+            }
+        }
+    });
+}
+
+/// Expire `active` sessions older than MAX_SESSION_HOURS (real time).
+/// Idempotent: only `active` rows are touched, so repeated runs are no-ops.
+pub async fn expire_overdue_sessions(state: &AppState) -> AppResult<usize> {
+    let now = state.clock.now();
+    let cutoff = now - chrono::Duration::hours(state.config.max_session_hours);
+
+    let mut tx = state.pool.begin().await?;
+    let expired: Vec<WorkSession> = sqlx::query_as::<_, WorkSession>(
+        "UPDATE work_sessions SET status = 'expired', expired_at = $1
+         WHERE status = 'active' AND started_at < $2
+         RETURNING *",
+    )
+    .bind(now)
+    .bind(cutoff)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if expired.is_empty() {
+        tx.commit().await?;
+        return Ok(0);
+    }
+
+    let admins: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' AND is_active")
+            .fetch_all(&mut *tx)
+            .await?;
+
+    let mut push_targets = Vec::new();
+    for s in &expired {
+        let mut targets = vec![s.student_id, s.komendant_id];
+        targets.extend(admins.iter().copied());
+        let body = "Сессия превысила лимит времени и была аннулирована".to_string();
+        state
+            .notify(
+                &mut tx,
+                &targets,
+                "session_expired",
+                "Сессия аннулирована",
+                &body,
+                json!({"session_id": s.id}),
+            )
+            .await?;
+        state
+            .audit(
+                &mut *tx,
+                AuditRecord::new("session_expire")
+                    .entity("session", s.id)
+                    .details(json!({"reason": "timeout", "student_id": s.student_id})),
+            )
+            .await?;
+        state
+            .komendant_log(
+                &mut *tx,
+                s.komendant_id,
+                "session_expired",
+                Some(s.student_id),
+                Some(s.id),
+                Some(json!({"reason": "timeout"})),
+            )
+            .await?;
+        push_targets.extend(targets);
+    }
+    tx.commit().await?;
+
+    push_targets.sort();
+    push_targets.dedup();
+    state.push_later(
+        push_targets,
+        "Сессия аннулирована".into(),
+        "Сессия превысила лимит времени и была аннулирована".into(),
+        json!({}),
+    );
+    Ok(expired.len())
+}
+
+/// Called every minute: on the 1st of a month after 00:05 local time, generate
+/// the previous month's summary if it does not exist yet. If the server was down
+/// on the 1st, catches up on any later day as soon as it sees the gap.
+pub async fn maybe_generate_monthly(state: &AppState) -> AppResult<Option<Uuid>> {
+    let local = state.clock.now().with_timezone(&state.config.timezone);
+    let past_first = local.day() > 1
+        || local.time() >= chrono::NaiveTime::from_hms_opt(0, 5, 0).unwrap();
+    if !past_first {
+        return Ok(None);
+    }
+    let (py, pm) = prev_month(local.year(), local.month() as i32);
+
+    let exists: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM monthly_summaries WHERE year = $1 AND month = $2")
+            .bind(py)
+            .bind(pm)
+            .fetch_optional(&state.pool)
+            .await?;
+    if exists.is_some() {
+        return Ok(None);
+    }
+    let id = summaries::generate(state, py, pm, None).await?;
+    Ok(Some(id))
+}
+
+fn prev_month(year: i32, month: i32) -> (i32, i32) {
+    if month == 1 {
+        (year - 1, 12)
+    } else {
+        (year, month - 1)
+    }
+}

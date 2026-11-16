@@ -1,0 +1,17 @@
+/target
+**/target/
+server/data/
+.env
+*.log
+node_modules/
+dist/
+vendor/
+.DS_Store
+.devdb/
+logs/
+photos/
+.env.*
+!.env.example
+server/serde_json/
+server/bindings/
+server/shared/

@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: prila
+      POSTGRES_USER: prila
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prila -d prila"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://prila:${DB_PASSWORD}@db:5432/prila
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      QR_SECRET: ${QR_SECRET:?set QR_SECRET in .env}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Vladivostok}
+      PHOTO_DIR: /data/photos
+      LOG_DIR: /data/logs
+      STATIC_DIR: /app/static
+      BIND_ADDR: 0.0.0.0:8080
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      EXPO_PUSH_ENABLED: ${EXPO_PUSH_ENABLED:-false}
+      EXPO_PUSH_URL: ${EXPO_PUSH_URL:-https://exp.host/--/api/v2/push/send}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      MAX_SESSION_HOURS: ${MAX_SESSION_HOURS:-4}
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - photos:/data/photos
+      - logs:/data/logs
+
+volumes:
+  db-data:
+  photos:
+  logs:

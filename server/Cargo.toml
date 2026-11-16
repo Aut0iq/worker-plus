@@ -1,0 +1,53 @@
+[package]
+name = "prila-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["multipart", "macros"] }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.9", default-features = false, features = [
+    "postgres",
+    "runtime-tokio",
+    "macros",
+    "chrono",
+    "uuid",
+    "json",
+    "migrate",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+argon2 = "0.6"
+jsonwebtoken = { version = "12", features = ["rust_crypto"] }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+tower-http = { version = "0.7", features = ["cors", "trace", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+rust_xlsxwriter = "0.102"
+calamine = "0.38"
+csv = "1"
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "rustls-native-certs",
+    "json",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+    "logging",
+] }
+hmac = "0.13"
+sha2 = "0.11"
+hex = "0.4"
+ts-rs = { version = "12", features = ["uuid-impl", "chrono-impl", "serde-json-impl"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rand = "0.10"
+futures = "0.3"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
