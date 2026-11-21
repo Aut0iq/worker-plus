@@ -1,5 +1,5 @@
 # ---- admin frontend build ----
-FROM node:20-alpine AS admin-build
+FROM node:22-alpine AS admin-build
 WORKDIR /build
 # sync-types resolves ../shared/api-types relative to the admin dir -> /shared/api-types
 COPY shared/api-types /shared/api-types
@@ -19,7 +19,9 @@ RUN cargo build --release --locked
 # ---- runtime ----
 FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home /app app \
+    && mkdir -p /data/photos /data/logs && chown -R app:app /data
 WORKDIR /app
 COPY --from=server-build /app/target/release/prila-server /app/prila-server
 COPY --from=admin-build /build/dist /app/static
@@ -30,4 +32,6 @@ ENV STATIC_DIR=/app/static \
 VOLUME ["/data/photos", "/data/logs"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s CMD curl -fsS http://localhost:8080/api/health || exit 1
-CMD ["/app/prila-server"]
+# start as root only to fix ownership of volumes created by older (root) images,
+# then run the server as the unprivileged `app` user (setpriv is in util-linux)
+CMD ["sh", "-c", "chown -R app:app /data/photos /data/logs && exec setpriv --reuid=app --regid=app --init-groups /app/prila-server"]

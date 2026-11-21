@@ -3,6 +3,7 @@ import {
   Drawer,
   Form,
   Input,
+  InputNumber,
   Modal,
   Select,
   Space,
@@ -19,7 +20,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { fmtMinutes, fmtTs } from '../format';
 import { roleLabels, sessionStatusLabels } from '../labels';
-import { HoursInput } from '../components/HoursInput';
 import type { Paginated } from '../api/types/Paginated';
 import type { UserDto } from '../api/types/UserDto';
 import type { GroupDto } from '../api/types/GroupDto';
@@ -70,7 +70,8 @@ export default function UsersPage() {
           role: v.role ?? null,
           login: v.login ?? null,
           full_name: v.full_name ?? null,
-          group_id: v.group_id === undefined ? null : v.group_id,
+          // only students have a group; null removes the user from it
+          group_id: v.role === 'student' ? (v.group_id ?? null) : null,
           is_active: v.is_active ?? null,
         });
       }
@@ -104,11 +105,15 @@ export default function UsersPage() {
     Modal.confirm({
       title: `Сбросить пароль ${u.full_name}?`,
       onOk: async () => {
-        const r = await api.post<{ password: string }>(`/api/admin/users/${u.id}/reset-password`);
-        Modal.info({
-          title: 'Новый пароль (показан один раз)',
-          content: <Typography.Text copyable code>{r.password}</Typography.Text>,
-        });
+        try {
+          const r = await api.post<{ password: string }>(`/api/admin/users/${u.id}/reset-password`);
+          Modal.info({
+            title: 'Новый пароль (показан один раз)',
+            content: <Typography.Text copyable code>{r.password}</Typography.Text>,
+          });
+        } catch (e) {
+          msg.error((e as Error).message);
+        }
       },
     });
 
@@ -159,7 +164,8 @@ export default function UsersPage() {
       });
       const ok = r.results.filter((x) => x.ok && x.generated_password);
       if (ok.length) {
-        const csv = 'Логин,Пароль\n' + ok.map((x) => `${x.login},${x.generated_password}`).join('\n');
+        // BOM: without it Excel opens UTF-8 CSV as mojibake
+        const csv = '\uFEFFЛогин,Пароль\n' + ok.map((x) => `${x.login},${x.generated_password}`).join('\n');
         const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
         const a = document.createElement('a');
         a.href = url;
@@ -173,7 +179,7 @@ export default function UsersPage() {
   };
 
   const template = () => {
-    const csv = 'ФИО,Логин,Пароль,Роль,Группа\nИванов Иван Иванович,ivanov,,студент,1А';
+    const csv = '\uFEFFФИО,Логин,Пароль,Роль,Группа\nИванов Иван Иванович,ivanov,,студент,1А\n';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
     a.download = 'import-template.csv';
@@ -277,6 +283,7 @@ export default function UsersPage() {
         onCancel={() => { setCreating(false); setEditing(null); }}
         onOk={() => form.submit()}
         confirmLoading={saveUser.isPending}
+        forceRender
       >
         <Form form={form} layout="vertical" onFinish={(v) => saveUser.mutate(v)}>
           <Form.Item name="full_name" label="ФИО" rules={[{ required: true }]}>
@@ -341,81 +348,112 @@ function UserDetail({ id, onClose }: { id: string | null; onClose: () => void })
   const qc = useQueryClient();
   const [msg, ctx] = message.useMessage();
   const [form] = Form.useForm();
+  // any role: the student profile endpoint 404s for staff, which left the drawer on «…»
+  const { data: u } = useQuery({
+    queryKey: ['admin-user', id],
+    enabled: !!id,
+    queryFn: () => api.get<UserDto>(`/api/admin/users/${id}`),
+  });
+  const isStudent = u?.role === 'student';
   const { data } = useQuery({
     queryKey: ['student', id],
-    enabled: !!id,
+    enabled: !!id && isStudent,
     queryFn: () => api.get<StudentProfileDto>(`/api/students/${id}`),
   });
   const { data: orders } = useQuery({
     queryKey: ['user-orders', id],
-    enabled: !!id,
+    enabled: !!id && isStudent,
     queryFn: () => api.get<Paginated<OrderDto>>(`/api/admin/orders?user_id=${id}`).catch(() => null),
   });
   const assign = useMutation({
-    mutationFn: (v: { minutes: number; reason: string }) =>
-      api.post(`/api/students/${id}/assignments`, { minutes: v.minutes, reason: v.reason }),
+    mutationFn: (v: { hours: number; reason?: string }) =>
+      api.post(`/api/students/${id}/assignments`, {
+        minutes: Math.round(v.hours) * 60,
+        reason: v.reason?.trim() || null,
+      }),
     onSuccess: () => {
       msg.success('Часы назначены');
       form.resetFields();
       qc.invalidateQueries({ queryKey: ['student', id] });
+      qc.invalidateQueries({ queryKey: ['admin-user', id] });
       qc.invalidateQueries({ queryKey: ['users'] });
     },
     onError: (e) => msg.error((e as Error).message),
   });
-  const u = data?.user;
+  const shown = data?.user ?? u;
   return (
-    <Drawer title={u?.full_name ?? '…'} open={!!id} onClose={onClose} width={720}>
+    <Drawer title={shown?.full_name ?? '…'} open={!!id} onClose={onClose} width={720}>
       {ctx}
-      {u && (
+      {shown && (
         <>
           <Typography.Paragraph>
-            Логин: {u.login} · Роль: {roleLabels[u.role] ?? u.role} · Группа: {u.group_name ?? '—'}
-            <br />
-            Долг: <b>{fmtMinutes(u.debt_minutes)}</b> · Баланс: <b>{fmtMinutes(u.balance_minutes)}</b>
+            Логин: {shown.login} · Роль: {roleLabels[shown.role] ?? shown.role} · Группа: {shown.group_name ?? '—'}
+            {isStudent && (
+              <>
+                <br />
+                Долг: <b>{fmtMinutes(shown.debt_minutes)}</b> · Баланс: <b>{fmtMinutes(shown.balance_minutes)}</b>
+              </>
+            )}
           </Typography.Paragraph>
-          {u.role === 'student' && (
-            <Form form={form} layout="inline" onFinish={(v) => assign.mutate(v)} style={{ marginBottom: 16 }}>
-              <Form.Item name="minutes" label="Назначить часы" rules={[{ required: true }]}>
-                <HoursInput value={form.getFieldValue('minutes')} onChange={(v) => form.setFieldValue('minutes', v)} />
+          {isStudent && (
+            <Form
+              form={form}
+              layout="inline"
+              onFinish={(v) =>
+                Modal.confirm({
+                  title: `Назначить ${v.hours} ч студенту ${shown.full_name}?`,
+                  onOk: () => assign.mutateAsync(v),
+                })
+              }
+              style={{ marginBottom: 16 }}
+            >
+              <Form.Item name="hours" label="Назначить часы" rules={[{ required: true, message: 'Сколько часов' }]}>
+                <InputNumber min={1} max={100} precision={0} addonAfter="ч" style={{ width: 120 }} />
               </Form.Item>
-              <Form.Item name="reason" rules={[{ required: true }]}>
-                <Input placeholder="Причина" style={{ width: 200 }} />
+              <Form.Item name="reason">
+                <Input placeholder="Комментарий (необязательно)" style={{ width: 220 }} />
               </Form.Item>
-              <Button type="primary" htmlType="submit">Назначить</Button>
+              <Button type="primary" htmlType="submit" loading={assign.isPending}>
+                Назначить
+              </Button>
             </Form>
           )}
-          <Typography.Title level={5}>Отработки</Typography.Title>
-          <Table
-            size="small"
-            rowKey="id"
-            dataSource={data?.recent_sessions ?? []}
-            pagination={false}
-            columns={[
-              { title: 'Начало', render: (_, s) => fmtTs(s.started_at) },
-              { title: 'Конец', render: (_, s) => fmtTs(s.ended_at) },
-              { title: 'Зачтено', render: (_, s) => fmtMinutes(s.credited_minutes) },
-              {
-                title: 'Статус',
-                render: (_, s) => {
-                  const st = sessionStatusLabels[s.status];
-                  return <Tag color={st?.color}>{st?.label ?? s.status}</Tag>;
-                },
-              },
-            ]}
-          />
-          <Typography.Title level={5} style={{ marginTop: 16 }}>Назначения</Typography.Title>
-          <Table
-            size="small"
-            rowKey="id"
-            dataSource={data?.assignments ?? []}
-            pagination={false}
-            columns={[
-              { title: 'Часы', render: (_, a) => fmtMinutes(a.minutes) },
-              { title: 'Причина', dataIndex: 'reason' },
-              { title: 'Кем', dataIndex: 'assigned_by_name' },
-              { title: 'Когда', render: (_, a) => fmtTs(a.created_at) },
-            ]}
-          />
+          {isStudent && (
+            <>
+              <Typography.Title level={5}>Отработки</Typography.Title>
+              <Table
+                size="small"
+                rowKey="id"
+                dataSource={data?.recent_sessions ?? []}
+                pagination={false}
+                columns={[
+                  { title: 'Начало', render: (_, s) => fmtTs(s.started_at) },
+                  { title: 'Конец', render: (_, s) => fmtTs(s.ended_at) },
+                  { title: 'Зачтено', render: (_, s) => fmtMinutes(s.credited_minutes) },
+                  {
+                    title: 'Статус',
+                    render: (_, s) => {
+                      const st = sessionStatusLabels[s.status];
+                      return <Tag color={st?.color}>{st?.label ?? s.status}</Tag>;
+                    },
+                  },
+                ]}
+              />
+              <Typography.Title level={5} style={{ marginTop: 16 }}>Назначения</Typography.Title>
+              <Table
+                size="small"
+                rowKey="id"
+                dataSource={data?.assignments ?? []}
+                pagination={false}
+                columns={[
+                  { title: 'Часы', render: (_, a) => fmtMinutes(a.minutes) },
+                  { title: 'Комментарий', dataIndex: 'reason', render: (v) => v || '—' },
+                  { title: 'Кем', dataIndex: 'assigned_by_name' },
+                  { title: 'Когда', render: (_, a) => fmtTs(a.created_at) },
+                ]}
+              />
+            </>
+          )}
           {orders?.items && orders.items.length > 0 && (
             <>
               <Typography.Title level={5} style={{ marginTop: 16 }}>Заказы</Typography.Title>

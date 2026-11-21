@@ -3,10 +3,13 @@ import { router } from 'expo-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import type { GroupDto } from '@/api/types/GroupDto';
+import { Icon } from '@/components/Icon';
 import { Empty } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
 export default function TeacherGroups() {
+  const colors = useColors();
+  const styles = useStyles();
   const q = useQuery({ queryKey: ['groups'], queryFn: () => api.get<GroupDto[]>('/api/groups') });
   return (
     <FlatList
@@ -19,14 +22,16 @@ export default function TeacherGroups() {
       renderItem={({ item }) => (
         <TouchableOpacity style={styles.item} onPress={() => router.push(`/group/${item.id}`)}>
           <Text style={styles.title}>{item.name}</Text>
-          <Text style={styles.arrow}>›</Text>
+          <Text style={styles.count}>{item.student_count} студ.</Text>
+          <Icon name="chevron" color={colors.muted} />
         </TouchableOpacity>
       )}
     />
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -38,5 +43,5 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
   },
   title: { flex: 1, fontSize: 16, fontWeight: '600', color: colors.text },
-  arrow: { fontSize: 22, color: colors.muted },
-});
+  count: { fontSize: 13, color: colors.muted, marginRight: 4 },
+}));

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Button } from './ui';
-import { colors } from '../theme';
+import { makeStyles } from '../theme';
 
 /** Full-screen QR scanner. Fires onScan once, then waits for onClose. */
 export function Scanner({
@@ -15,6 +15,7 @@ export function Scanner({
   onClose: () => void;
 }) {
   const [perm, requestPerm] = useCameraPermissions();
+  const styles = useStyles();
   const fired = useRef(false);
 
   useEffect(() => {
@@ -63,10 +64,11 @@ export function Scanner({
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
   msg: { color: '#fff', fontSize: 16, textAlign: 'center', marginBottom: 16 },
   bottom: { position: 'absolute', bottom: 40, left: 24, right: 24 },
   muted: { color: colors.muted },
-});
+}));

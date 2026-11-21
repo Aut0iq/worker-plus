@@ -18,9 +18,12 @@ const num = (v: Min): number => (v == null ? 0 : Number(v));
 export function fmtMinutes(m: Min): string {
   const v = num(m);
   if (v === 0) return '0м';
-  const h = Math.trunc(v / 60);
-  const mm = Math.abs(v % 60);
-  return h !== 0 ? `${h}ч ${mm}м` : `${mm}м`;
+  // sign separately: Math.trunc(-59 / 60) is -0 and would drop the minus
+  const sign = v < 0 ? '-' : '';
+  const a = Math.abs(v);
+  const h = Math.trunc(a / 60);
+  const mm = a % 60;
+  return h !== 0 ? `${sign}${h}ч ${mm}м` : `${sign}${mm}м`;
 }
 
 export const numMin = num;

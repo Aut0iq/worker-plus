@@ -67,7 +67,16 @@ async fn start_session(
     .bind(verified.difficulty.coefficient() as i32)
     .bind(state.clock.now())
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    // two truly parallel starts (double tap, retry after a lost response):
+    // the loser hits the one-open-session unique index
+    .map_err(|e| match &e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => AppError::conflict(
+            "session_exists",
+            "У вас уже есть незавершённая сессия",
+        ),
+        _ => AppError::from(e),
+    })?;
 
     state
         .audit(
@@ -98,47 +107,61 @@ async fn start_session(
 }
 
 const MAX_PHOTO_BYTES: usize = 10 * 1024 * 1024;
+
+/// A broken multipart body (connection cut, body over the 16 MB limit) must not
+/// turn into a misleading "missing field" error.
+pub(crate) fn multipart_error(e: axum::extract::multipart::MultipartError) -> AppError {
+    if e.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+        AppError::new(
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "too_large",
+            "Файл слишком большой (максимум 10 МБ)",
+        )
+    } else {
+        AppError::bad_request(
+            "bad_multipart",
+            format!("Данные формы повреждены или переданы не полностью: {}", e.body_text()),
+        )
+    }
+}
+
 async fn finish_session(
     State(state): State<AppState>,
     auth: StudentUser,
     mut multipart: Multipart,
 ) -> AppResult<Json<SessionDto>> {
     let mut qr: Option<String> = None;
-    let mut photo: Option<(String, Vec<u8>)> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    let mut photo: Option<Vec<u8>> = None;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return Err(multipart_error(e)),
+        };
         match field.name() {
-            Some("qr") => {
-                qr = Some(field.text().await.map_err(|_| {
-                    AppError::bad_request("bad_multipart", "Некорректные данные формы")
-                })?);
-            }
-            Some("photo") => {
-                let mime = field
-                    .content_type()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let data = field.bytes().await.map_err(|_| {
-                    AppError::bad_request("bad_multipart", "Некорректные данные формы")
-                })?;
-                photo = Some((mime, data.to_vec()));
-            }
+            Some("qr") => qr = Some(field.text().await.map_err(multipart_error)?),
+            Some("photo") => photo = Some(field.bytes().await.map_err(multipart_error)?.to_vec()),
             _ => {}
         }
     }
-    let qr = qr.ok_or_else(|| AppError::bad_request("missing_qr", "Не передан QR-код"))?;
-    let (_mime, photo_bytes) = photo
-        .ok_or_else(|| AppError::bad_request("missing_photo", "Не прикреплено фото"))?;
-    let ext = domain::sniff_image_ext(&photo_bytes).ok_or_else(|| {
-        AppError::bad_request("bad_photo_type", "Фото должно быть jpeg, png, heic или webp")
-    })?;
+    let photo_bytes =
+        photo.ok_or_else(|| AppError::bad_request("missing_photo", "Не прикреплено фото"))?;
     if photo_bytes.is_empty() || photo_bytes.len() > MAX_PHOTO_BYTES {
         return Err(AppError::bad_request(
             "bad_photo_size",
             "Фото должно быть не более 10 МБ",
         ));
     }
+    let ext = domain::sniff_image_ext(&photo_bytes).ok_or_else(|| {
+        AppError::bad_request("bad_photo_type", "Фото должно быть jpeg, png, heic или webp")
+    })?;
 
-    let verified = qr::verify(&state.config.qr_secret, &qr, state.clock.now())?;
+    // QR on finish is optional: the session is already bound to its komendant.
+    // If the app still sends one, it must belong to the same komendant.
+    let verified = match qr.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+        Some(q) => Some(qr::verify(&state.config.qr_secret, q, state.clock.now())?),
+        None => None,
+    };
 
     let session = sqlx::query_as::<_, WorkSession>(
         "SELECT * FROM work_sessions WHERE student_id = $1 AND status = 'active'",
@@ -148,7 +171,7 @@ async fn finish_session(
     .await?
     .ok_or_else(|| AppError::conflict("no_active_session", "Нет активной сессии"))?;
 
-    if session.komendant_id != verified.komendant_id {
+    if verified.is_some_and(|v| v.komendant_id != session.komendant_id) {
         return Err(AppError::bad_request(
             "qr_komendant_mismatch",
             "QR-код принадлежит другому коменданту",
@@ -218,7 +241,11 @@ async fn finish_session(
                 &[session.komendant_id],
                 "session_finished",
                 "Сессия ожидает подтверждения",
-                &format!("Студент {} завершил сессию, начислено {} мин", auth.user.full_name, credited),
+                &format!(
+                    "Студент {} завершил сессию, к зачёту {}",
+                    auth.user.full_name,
+                    domain::fmt_minutes(credited)
+                ),
                 json!({"session_id": session.id}),
             )
             .await?;

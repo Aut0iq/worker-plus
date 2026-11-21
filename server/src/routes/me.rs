@@ -3,7 +3,9 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use uuid::Uuid;
 
-use crate::auth::{hash_password, verify_password, AuthUser};
+use crate::auth::{
+    encode_token, hash_password_blocking, password_too_short, verify_password_blocking, AuthUser,
+};
 use crate::dto::{
     ChangePasswordRequest, NotificationDto, PageQuery, Paginated, PushTokenRequest, UserDto,
 };
@@ -20,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/me/push-token", delete(remove_push_token))
         .route("/notifications", get(notifications))
         .route("/notifications/read-all", post(notifications_read_all))
+        .route("/notifications/unread-count", get(unread_count))
         .route("/notifications/{id}/read", post(notification_read))
 }
 
@@ -36,23 +39,27 @@ async fn change_password(
     auth: AuthUser,
     Json(req): Json<ChangePasswordRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    if req.new_password.len() < 6 {
+    if password_too_short(&req.new_password) {
         return Err(AppError::bad_request(
             "weak_password",
             "Новый пароль должен содержать не менее 6 символов",
         ));
     }
-    if !verify_password(&req.old_password, &auth.user.password_hash) {
+    if !verify_password_blocking(req.old_password.clone(), Some(auth.user.password_hash.clone())).await
+    {
         return Err(AppError::bad_request(
             "wrong_password",
             "Неверный текущий пароль",
         ));
     }
-    let hash = hash_password(&req.new_password)?;
+    let hash = hash_password_blocking(req.new_password.clone()).await?;
+    let now = state.clock.now();
     let mut tx = state.pool.begin().await?;
-    sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+    // password_changed_at revokes tokens issued before now (other devices, stolen tokens)
+    sqlx::query("UPDATE users SET password_hash = $1, password_changed_at = $3 WHERE id = $2")
         .bind(&hash)
         .bind(auth.user.id)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     state
@@ -64,7 +71,9 @@ async fn change_password(
         )
         .await?;
     tx.commit().await?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    // a fresh token so the device that changed the password stays logged in
+    let token = encode_token(auth.user.id, &state.config.jwt_secret, now)?;
+    Ok(Json(serde_json::json!({"ok": true, "token": token})))
 }
 
 async fn add_push_token(
@@ -162,4 +171,18 @@ async fn notifications_read_all(
         .execute(&state.pool)
         .await?;
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+/// Badge counter without pulling a page of notifications.
+async fn unread_count(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> AppResult<Json<serde_json::Value>> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL",
+    )
+    .bind(auth.user.id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(Json(serde_json::json!({"count": count})))
 }

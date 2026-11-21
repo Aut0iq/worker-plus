@@ -15,6 +15,8 @@ type AuthCtx = {
   login: (login: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshMe: () => Promise<void>;
+  /** replace the stored token (the server issues a new one after a password change) */
+  updateToken: (t: string) => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx | null>(null);
@@ -94,8 +96,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(await api.get<UserDto>('/api/me'));
   }, []);
 
+  const updateToken = useCallback(async (t: string) => {
+    setToken(t);
+    try {
+      await SecureStore.setItemAsync(TOKEN_KEY, t);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   return (
-    <Ctx.Provider value={{ user, config, ready, login, logout, refreshMe }}>
+    <Ctx.Provider value={{ user, config, ready, login, logout, refreshMe, updateToken }}>
       {children}
     </Ctx.Provider>
   );

@@ -1,4 +1,4 @@
-use prila_server::auth::hash_password;
+use prila_server::auth::{hash_password, normalize_login};
 use prila_server::config::Config;
 use prila_server::AppState;
 use sqlx::postgres::PgPoolOptions;
@@ -62,22 +62,39 @@ async fn ensure_admin(
     pool: &sqlx::PgPool,
     config: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // only an *active* admin counts: if every admin was deactivated, nobody could log in
     let exists: Option<uuid::Uuid> =
-        sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
+        sqlx::query_scalar("SELECT id FROM users WHERE role = 'admin' AND is_active LIMIT 1")
             .fetch_optional(pool)
             .await?;
     if exists.is_some() {
         return Ok(());
     }
+    let login = normalize_login(&config.admin_login);
     let hash = hash_password(&config.admin_password)?;
+    // the configured login may already exist (e.g. the deactivated admin):
+    // restore it as an active admin with the password from ADMIN_PASSWORD
+    let restored = sqlx::query(
+        "UPDATE users SET role = 'admin', is_active = TRUE, password_hash = $2,
+                password_changed_at = now()
+         WHERE lower(login) = $1",
+    )
+    .bind(&login)
+    .bind(&hash)
+    .execute(pool)
+    .await?;
+    if restored.rows_affected() > 0 {
+        tracing::warn!(login = %login, "no active admin: restored admin account from ADMIN_LOGIN/ADMIN_PASSWORD");
+        return Ok(());
+    }
     sqlx::query(
         "INSERT INTO users (role, login, password_hash, full_name)
          VALUES ('admin', $1, $2, 'Администратор')",
     )
-    .bind(&config.admin_login)
+    .bind(&login)
     .bind(&hash)
     .execute(pool)
     .await?;
-    tracing::info!(login = %config.admin_login, "created initial admin user");
+    tracing::info!(login = %login, "created initial admin user");
     Ok(())
 }

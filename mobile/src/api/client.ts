@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://192.168.31.63:8080').replace(/\/+$/, '');
+let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://185.28.173.203:8080').replace(/\/+$/, '');
 let token: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 
@@ -46,35 +46,73 @@ export async function saveServerUrl(u: string | null) {
   }
 }
 
+const TIMEOUT_MS = 20_000;
+// photo upload on a slow mobile network takes longer than a JSON call
+const UPLOAD_TIMEOUT_MS = 90_000;
+
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
+  const hadToken = !!token;
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData;
   if (init.body && !isForm && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
+  const timeoutMs = isForm ? UPLOAD_TIMEOUT_MS : TIMEOUT_MS;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   let resp: Response;
   try {
-    resp = await fetch(`${baseUrl}${path}`, { ...init, headers });
-  } catch {
-    throw new ApiError(0, 'network', 'Нет связи с сервером');
+    resp = await fetch(`${baseUrl}${path}`, { ...init, headers, signal: ctrl.signal });
+  } catch (e) {
+    // only here is it really "no connection"; HTTP errors are handled below
+    if (ctrl.signal.aborted) {
+      throw new ApiError(
+        0,
+        'timeout',
+        `Сервер не ответил за ${timeoutMs / 1000} с. Проверьте интернет и попробуйте ещё раз`,
+      );
+    }
+    const detail = e instanceof Error && e.message ? ` (${e.message})` : '';
+    throw new ApiError(
+      0,
+      'network',
+      `Нет связи с сервером ${baseUrl}. Проверьте интернет (Wi-Fi или мобильные данные)${detail}`,
+    );
+  } finally {
+    clearTimeout(timer);
   }
-  if (resp.status === 401) {
-    onUnauthorized?.();
-    throw new ApiError(401, 'unauthorized', 'Требуется вход');
-  }
-  const text = await resp.text();
+  const text = await resp.text().catch(() => '');
   let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    // non-JSON response
+    // non-JSON response (proxy error page etc.)
+  }
+  const e = (data as { error?: { code?: string; message?: string } } | null)?.error;
+  if (resp.status === 401) {
+    // a wrong password on the login screen is also 401: keep the server message
+    if (hadToken) onUnauthorized?.();
+    throw new ApiError(401, e?.code ?? 'unauthorized', e?.message ?? 'Требуется вход');
   }
   if (!resp.ok) {
-    const e = (data as { error?: { code?: string; message?: string } } | null)?.error;
-    throw new ApiError(resp.status, e?.code ?? 'error', e?.message ?? `Ошибка ${resp.status}`);
+    const fallback =
+      resp.status === 413
+        ? 'Файл слишком большой'
+        : resp.status >= 500
+          ? `Ошибка сервера (${resp.status})`
+          : `Ошибка ${resp.status}`;
+    throw new ApiError(resp.status, e?.code ?? 'http_error', e?.message ?? fallback);
   }
   return data as T;
+}
+
+/** User-facing text for any error, with the server error code for support. */
+export function errorText(e: unknown, fallback = 'Ошибка'): string {
+  if (e instanceof ApiError) {
+    return e.status > 0 ? `${e.message} [${e.status} ${e.code}]` : e.message;
+  }
+  return e instanceof Error && e.message ? e.message : fallback;
 }
 
 export const api = {

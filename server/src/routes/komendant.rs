@@ -1,5 +1,5 @@
 use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -85,9 +85,10 @@ async fn qr_refresh(
     auth: KomendantUser,
     Query(q): Query<QrQuery>,
 ) -> AppResult<Json<QrOpenResponse>> {
-    issue_qr(&state, &auth, q.difficulty.unwrap_or(Difficulty::Light), false)
-        .await
-        .map(Json)
+    let difficulty = q.difficulty.ok_or_else(|| {
+        AppError::bad_request("missing_difficulty", "Не указана сложность (light или hard)")
+    })?;
+    issue_qr(&state, &auth, difficulty, false).await.map(Json)
 }
 
 #[derive(Deserialize)]
@@ -162,6 +163,33 @@ async fn confirm_session(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<SessionDto>> {
     let mut tx = state.pool.begin().await?;
+    let session = lock_pending_session(&mut tx, id).await?;
+    if session.komendant_id != auth.user.id {
+        return Err(AppError::forbidden("Чужая сессия"));
+    }
+    let pushes = credit_session(&state, &mut tx, &session, auth.user.id, "komendant").await?;
+    tx.commit().await?;
+    for (users, title, body) in pushes {
+        state.push_later(users, title, body, json!({"session_id": session.id}));
+    }
+    session_dto(&state, session.id).await.map(Json)
+}
+
+pub(crate) async fn session_dto(state: &AppState, id: Uuid) -> AppResult<SessionDto> {
+    let row = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(format!(
+        "{SESSION_SELECT} WHERE s.id = $1"
+    )))
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(row.into())
+}
+
+/// Lock a session that must be in `pending_confirmation`.
+pub(crate) async fn lock_pending_session(
+    tx: &mut sqlx::PgConnection,
+    id: Uuid,
+) -> AppResult<WorkSession> {
     let session = sqlx::query_as::<_, WorkSession>(
         "SELECT * FROM work_sessions WHERE id = $1 FOR UPDATE",
     )
@@ -169,16 +197,29 @@ async fn confirm_session(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
-
-    if session.komendant_id != auth.user.id {
-        return Err(AppError::forbidden("Чужая сессия"));
-    }
     if session.status != SessionStatus::PendingConfirmation {
         return Err(AppError::conflict(
             "bad_status",
             "Сессия не ожидает подтверждения",
         ));
     }
+    Ok(session)
+}
+
+/// Push messages to send after commit: (recipients, title, body).
+pub(crate) type Pushes = Vec<(Vec<Uuid>, String, String)>;
+
+/// Credit a pending session (komendant confirm, or admin resolving a stuck one):
+/// minutes cover debt first, the rest goes to balance; the photo goes to the
+/// admin review queue. Notifies the student and the teachers who assigned
+/// the hours being worked off. Runs inside the caller's transaction.
+pub(crate) async fn credit_session(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    session: &WorkSession,
+    actor_id: Uuid,
+    actor_role: &str,
+) -> AppResult<Pushes> {
     let credited = session.credited_minutes.unwrap_or(0);
 
     // lock the student row while adjusting debt/balance
@@ -199,7 +240,8 @@ async fn confirm_session(
     .await?;
     sqlx::query(
         "UPDATE work_sessions SET status = 'credited', confirmed_at = $1,
-         applied_to_debt = $2, applied_to_balance = $3, photo_review = 'pending'
+         applied_to_debt = $2, applied_to_balance = $3,
+         photo_review = CASE WHEN photo_path IS NULL THEN NULL ELSE 'pending' END
          WHERE id = $4",
     )
     .bind(state.clock.now())
@@ -213,7 +255,7 @@ async fn confirm_session(
         .audit(
             &mut *tx,
             AuditRecord::new("session_confirm")
-                .actor(auth.user.id, "komendant")
+                .actor(actor_id, actor_role)
                 .entity("session", session.id)
                 .details(json!({"to_debt": alloc.to_debt, "to_balance": alloc.to_balance})),
         )
@@ -221,37 +263,66 @@ async fn confirm_session(
     state
         .komendant_log(
             &mut *tx,
-            auth.user.id,
+            session.komendant_id,
             "session_confirmed",
             Some(session.student_id),
             Some(session.id),
-            Some(json!({"to_debt": alloc.to_debt, "to_balance": alloc.to_balance})),
+            Some(json!({"to_debt": alloc.to_debt, "to_balance": alloc.to_balance, "by": actor_role})),
         )
         .await?;
+
+    let credited_s = domain::fmt_minutes(credited);
+    let mut pushes: Pushes = Vec::new();
+    let body = format!("Отработка подтверждена: зачтено {credited_s}");
     state
         .notify(
-            &mut tx,
+            tx,
             &[session.student_id],
             "session_credited",
             "Часы зачтены",
-            &format!("Комендант подтвердил сессию: зачтено {} мин", credited),
+            &body,
             json!({"session_id": session.id}),
         )
         .await?;
-    tx.commit().await?;
+    pushes.push((vec![session.student_id], "Часы зачтены".into(), body));
 
-    state.push_later(
-        vec![session.student_id],
-        "Часы зачтены".into(),
-        format!("Зачтено {} мин", credited),
-        json!({"session_id": session.id}),
-    );
-
-    let row = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(format!("{SESSION_SELECT} WHERE s.id = $1")))
-        .bind(session.id)
-        .fetch_one(&state.pool)
+    // teachers who assigned hours to this student learn that debt was worked off
+    if alloc.to_debt > 0 {
+        let teachers: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT DISTINCT a.assigned_by FROM assignments a
+             JOIN users t ON t.id = a.assigned_by
+             WHERE a.student_id = $1 AND t.is_active AND t.role = 'teacher'",
+        )
+        .bind(session.student_id)
+        .fetch_all(&mut *tx)
         .await?;
-    Ok(Json(row.into()))
+        if !teachers.is_empty() {
+            let left = student.debt_minutes - alloc.to_debt;
+            let title = if left == 0 {
+                "Долг отработан"
+            } else {
+                "Студент отработал часы"
+            };
+            let body = format!(
+                "{}: отработано {}, осталось {}",
+                student.full_name,
+                domain::fmt_minutes(alloc.to_debt),
+                domain::fmt_minutes(left)
+            );
+            state
+                .notify(
+                    tx,
+                    &teachers,
+                    "debt_worked_off",
+                    title,
+                    &body,
+                    json!({"session_id": session.id, "student_id": session.student_id}),
+                )
+                .await?;
+            pushes.push((teachers, title.into(), body));
+        }
+    }
+    Ok(pushes)
 }
 
 async fn reject_session(
@@ -260,108 +331,87 @@ async fn reject_session(
     Path(id): Path<Uuid>,
     Json(req): Json<RejectSessionRequest>,
 ) -> AppResult<Json<SessionDto>> {
+    let reason = req.reason.trim();
+    if reason.is_empty() {
+        return Err(AppError::bad_request("invalid_reason", "Укажите причину"));
+    }
     let mut tx = state.pool.begin().await?;
-    let session = sqlx::query_as::<_, WorkSession>(
-        "SELECT * FROM work_sessions WHERE id = $1 FOR UPDATE",
-    )
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
-
+    let session = lock_pending_session(&mut tx, id).await?;
     if session.komendant_id != auth.user.id {
         return Err(AppError::forbidden("Чужая сессия"));
     }
-    if session.status != SessionStatus::PendingConfirmation {
-        return Err(AppError::conflict(
-            "bad_status",
-            "Сессия не ожидает подтверждения",
-        ));
-    }
+    let push = reject_pending(&state, &mut tx, &session, reason, auth.user.id, "komendant").await?;
+    tx.commit().await?;
+    state.push_later(push.0, push.1, push.2, json!({"session_id": session.id}));
+    session_dto(&state, session.id).await.map(Json)
+}
+
+/// Reject a pending session (komendant, or admin resolving a stuck one). Inside the caller's tx.
+pub(crate) async fn reject_pending(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    session: &WorkSession,
+    reason: &str,
+    actor_id: Uuid,
+    actor_role: &str,
+) -> AppResult<(Vec<Uuid>, String, String)> {
     sqlx::query(
         "UPDATE work_sessions SET status = 'komendant_rejected', rejected_reason = $1 WHERE id = $2",
     )
-    .bind(&req.reason)
+    .bind(reason)
     .bind(session.id)
     .execute(&mut *tx)
     .await?;
-
     state
         .audit(
             &mut *tx,
             AuditRecord::new("session_reject")
-                .actor(auth.user.id, "komendant")
+                .actor(actor_id, actor_role)
                 .entity("session", session.id)
-                .details(json!({"reason": req.reason})),
+                .details(json!({"reason": reason})),
         )
         .await?;
     state
         .komendant_log(
             &mut *tx,
-            auth.user.id,
+            session.komendant_id,
             "session_rejected",
             Some(session.student_id),
             Some(session.id),
-            Some(json!({"reason": req.reason})),
+            Some(json!({"reason": reason, "by": actor_role})),
         )
         .await?;
+    let body = format!("Отработка отклонена: {reason}");
     state
         .notify(
-            &mut tx,
+            tx,
             &[session.student_id],
             "session_rejected",
             "Сессия отклонена",
-            &format!("Комендант отклонил сессию: {}", req.reason),
+            &body,
             json!({"session_id": session.id}),
         )
         .await?;
-    tx.commit().await?;
-
-    state.push_later(
-        vec![session.student_id],
-        "Сессия отклонена".into(),
-        format!("Комендант отклонил сессию: {}", req.reason),
-        json!({"session_id": session.id}),
-    );
-
-    let row = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(format!("{SESSION_SELECT} WHERE s.id = $1")))
-        .bind(session.id)
-        .fetch_one(&state.pool)
-        .await?;
-    Ok(Json(row.into()))
+    Ok((vec![session.student_id], "Сессия отклонена".into(), body))
 }
 
-const PHOTO_CONTENT_TYPES: [(&str, &str); 4] = [
-    ("jpg", "image/jpeg"),
-    ("png", "image/png"),
-    ("heic", "image/heic"),
-    ("webp", "image/webp"),
-];
-
-async fn serve_photo(state: &AppState, session: &WorkSession) -> AppResult<Response> {
+/// Serve a session photo from disk. Shared by the komendant/student and admin routes.
+pub(crate) async fn serve_photo(state: &AppState, session: &WorkSession) -> AppResult<Response> {
     let rel = session
         .photo_path
         .as_ref()
         .ok_or_else(|| AppError::not_found("Фото отсутствует"))?;
     // photo_path is generated server-side (uuid.ext); guard anyway
-    if rel.contains('/') || rel.contains("..") {
+    if rel.contains('/') || rel.contains('\\') || rel.contains("..") {
         return Err(AppError::internal("bad photo path"));
     }
-    let ext = rel.rsplit('.').next().unwrap_or("");
-    let mime = PHOTO_CONTENT_TYPES
-        .iter()
-        .find(|(e, _)| *e == ext)
-        .map(|(_, m)| *m)
-        .unwrap_or("application/octet-stream");
+    let mime = domain::image_mime(rel.rsplit('.').next().unwrap_or(""));
     let bytes = tokio::fs::read(state.config.photo_dir.join(rel))
         .await
         .map_err(|_| AppError::not_found("Фото не найдено на диске"))?;
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
-    headers.insert(
-        header::CACHE_CONTROL,
-        "private, no-store".parse().unwrap(),
-    );
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-store"));
     Ok((StatusCode::OK, headers, bytes).into_response())
 }
 

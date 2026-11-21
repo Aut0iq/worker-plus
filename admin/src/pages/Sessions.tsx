@@ -1,4 +1,19 @@
-import { Button, DatePicker, Drawer, Image, Input, Modal, Select, Space, Table, Tabs, Tag, message } from 'antd';
+import {
+  Alert,
+  Button,
+  DatePicker,
+  Drawer,
+  Image,
+  Input,
+  Modal,
+  Select,
+  Space,
+  Table,
+  Tabs,
+  Tag,
+  Typography,
+  message,
+} from 'antd';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, downloadBlob } from '../api/client';
@@ -142,6 +157,8 @@ function PhotoReview() {
   return (
     <>
       {ctx}
+      <AwaitingKomendant />
+      <Typography.Title level={5}>Фото после подтверждения коменданта</Typography.Title>
       <Table
         rowKey="id"
         size="small"
@@ -170,6 +187,98 @@ function PhotoReview() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Photos reach the admin queue only after the komendant confirms. Sessions still
+ * waiting for him are listed here, so they are visible, and the admin can decide
+ * when the komendant is unavailable (otherwise the student is blocked: one open
+ * session per student).
+ */
+function AwaitingKomendant() {
+  const qc = useQueryClient();
+  const [msg, ctx] = message.useMessage();
+  const { data, isLoading } = useQuery({
+    queryKey: ['sessions-awaiting-komendant'],
+    queryFn: () =>
+      api.get<Paginated<SessionDto>>('/api/admin/sessions?status=pending_confirmation&per_page=100'),
+    refetchInterval: 30_000,
+  });
+  const resolve = useMutation({
+    mutationFn: (v: { id: string; confirm: boolean; reason?: string }) =>
+      api.post(`/api/admin/sessions/${v.id}/resolve`, { confirm: v.confirm, reason: v.reason ?? null }),
+    onSuccess: () => {
+      msg.success('Готово');
+      qc.invalidateQueries({ queryKey: ['sessions-awaiting-komendant'] });
+      qc.invalidateQueries({ queryKey: ['photo-review'] });
+      qc.invalidateQueries({ queryKey: ['sessions'] });
+    },
+    onError: (e) => msg.error((e as Error).message),
+  });
+  const confirm = (s: SessionDto) =>
+    Modal.confirm({
+      title: `Зачесть за коменданта: ${s.student_name}, ${fmtMinutes(s.credited_minutes)}?`,
+      content: 'Часы начислятся как при подтверждении комендантом, фото попадёт на проверку.',
+      onOk: () => resolve.mutateAsync({ id: s.id, confirm: true }),
+    });
+  const reject = (s: SessionDto) => {
+    let reason = '';
+    Modal.confirm({
+      title: `Отклонить отработку ${s.student_name}?`,
+      content: (
+        <Input.TextArea placeholder="Причина (обязательно)" onChange={(e) => (reason = e.target.value)} />
+      ),
+      okText: 'Отклонить',
+      okButtonProps: { danger: true },
+      onOk: () => {
+        if (!reason.trim()) {
+          msg.error('Укажите причину');
+          return Promise.reject();
+        }
+        return resolve.mutateAsync({ id: s.id, confirm: false, reason });
+      },
+    });
+  };
+  const items = data?.items ?? [];
+  if (!isLoading && items.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 24 }}>
+      {ctx}
+      <Typography.Title level={5}>Ждут подтверждения коменданта ({Number(data?.total ?? 0)})</Typography.Title>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 8 }}
+        message="Фото появится в проверке после подтверждения коменданта. Если комендант недоступен, решите за него."
+      />
+      <Table
+        rowKey="id"
+        size="small"
+        loading={isLoading}
+        dataSource={items}
+        pagination={false}
+        columns={[
+          { title: 'Студент', dataIndex: 'student_name' },
+          { title: 'Комендант', dataIndex: 'komendant_name' },
+          { title: 'Завершена', render: (_, s) => fmtTs(s.ended_at) },
+          { title: 'К зачёту', render: (_, s) => fmtMinutes(s.credited_minutes) },
+          {
+            title: '',
+            render: (_, s) => (
+              <Space>
+                <Button size="small" onClick={() => confirm(s)}>
+                  Зачесть
+                </Button>
+                <Button size="small" danger onClick={() => reject(s)}>
+                  Отклонить
+                </Button>
+              </Space>
+            ),
+          },
+        ]}
+      />
+    </div>
   );
 }
 

@@ -10,7 +10,33 @@ use crate::summaries;
 
 pub fn spawn_all(state: AppState) {
     spawn_expiry_loop(state.clone());
-    spawn_summary_loop(state);
+    spawn_summary_loop(state.clone());
+    spawn_cleanup_loop(state);
+}
+
+/// Read notifications are kept 180 days, then deleted (the table otherwise only grows).
+/// Audit/komendant logs are kept forever: the spec requires them.
+const NOTIFICATION_RETENTION_DAYS: i64 = 180;
+
+fn spawn_cleanup_loop(state: AppState) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
+        loop {
+            interval.tick().await;
+            if let Err(e) = cleanup_notifications(&state).await {
+                tracing::error!(error = ?e, "notification cleanup failed");
+            }
+        }
+    });
+}
+
+pub async fn cleanup_notifications(state: &AppState) -> AppResult<u64> {
+    let cutoff = state.clock.now() - chrono::Duration::days(NOTIFICATION_RETENTION_DAYS);
+    let res = sqlx::query("DELETE FROM notifications WHERE read_at IS NOT NULL AND created_at < $1")
+        .bind(cutoff)
+        .execute(&state.pool)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 fn spawn_expiry_loop(state: AppState) {

@@ -446,7 +446,36 @@ async fn role_restrictions(pool: PgPool) {
     let tok_kom = login(&app.app, "kom1").await;
     let (st, _) = call(&app.app, "GET", "/api/admin/users", Some(&tok_kom), None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
-    // komendant cannot confirm other komendant's sessions: covered implicitly
+    // komendant cannot confirm/reject another komendant's session, nor a non-pending one
+    let kom2 = create_user(&pool, "komendant", "kom2", "Комендант 2", None).await;
+    let _ = kom2;
+    let tok_kom2 = login(&app.app, "kom2").await;
+    let qr = open_qr(&app.app, &tok_kom, "light").await;
+    let active = start_session(&app.app, &tok_student, &qr).await;
+    let sid = active["id"].as_str().unwrap();
+    let (st, _) = call(
+        &app.app,
+        "POST",
+        &format!("/api/komendant/sessions/{sid}/confirm"),
+        Some(&tok_kom),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::CONFLICT, "active session is not pending");
+    app.clock.advance_seconds(600);
+    let (st, _) = finish_photo_only(&app.app, &tok_student).await;
+    assert_eq!(st, StatusCode::OK);
+    for path in ["confirm", "reject"] {
+        let (st, _) = call(
+            &app.app,
+            "POST",
+            &format!("/api/komendant/sessions/{sid}/{path}"),
+            Some(&tok_kom2),
+            Some(json!({"reason": "x"})),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN, "{path} by other komendant");
+    }
 }
 
 #[sqlx::test]
@@ -604,8 +633,8 @@ async fn login_failure_audited_and_import_csv(pool: PgPool) {
     let csv = "ФИО;Логин;Пароль;Роль;Группа\n\
                Пётр Петров;petr;;студент;А-1\n\
                Ольга Олегова;olga;secret1;преподаватель;\n";
-    // our parser expects commas; use comma CSV
-    let csv = csv.replace(';', ",");
+    // Excel-style CSV: UTF-8 BOM + ';' delimiter
+    let csv = format!("\u{feff}{csv}");
     let (st, v) = call_multipart(
         &app.app,
         "/api/admin/users/import",
@@ -792,4 +821,342 @@ async fn xff_last_entry_used_with_trust_proxy(pool: PgPool) {
     let st = login_with_xff(&app.app, "1.1.1.1, 203.0.113.7").await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
     assert_eq!(last_login_failure_ip(&pool).await.as_deref(), Some("203.0.113.7"));
+}
+
+// ---------- regression tests for NEEDTOFIX audit 2026-11-17 ----------
+
+async fn debt_balance(pool: &PgPool, user: Uuid) -> (i64, i64) {
+    sqlx::query_as("SELECT debt_minutes, balance_minutes FROM users WHERE id = $1")
+        .bind(user)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// student finishes and the komendant confirms; returns the session id
+async fn credited_session(app: &common::TestApp, tok_student: &str, tok_kom: &str, secs: i64) -> String {
+    let qr = open_qr(&app.app, tok_kom, "light").await;
+    let v = start_session(&app.app, tok_student, &qr).await;
+    let sid = v["id"].as_str().unwrap().to_string();
+    app.clock.advance_seconds(secs);
+    let (st, v) = finish_photo_only(&app.app, tok_student).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        &format!("/api/komendant/sessions/{sid}/confirm"),
+        Some(tok_kom),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    sid
+}
+
+async fn finish_photo_only(app: &axum::Router, tok: &str) -> (StatusCode, serde_json::Value) {
+    call_multipart(
+        app,
+        "/api/student/sessions/finish",
+        tok,
+        vec![("photo", Some("p.jpg"), "image/jpeg", b"\xff\xd8\xff\xe0fakejpeg".to_vec())],
+    )
+    .await
+}
+
+#[sqlx::test]
+async fn finish_without_qr_and_multipart_errors(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let qr = open_qr(&app.app, &tok_kom, "light").await;
+    start_session(&app.app, &tok_student, &qr).await;
+    app.clock.advance_seconds(1800);
+
+    // no photo -> missing_photo (not a misleading QR error)
+    let (st, v) = call_multipart(
+        &app.app,
+        "/api/student/sessions/finish",
+        &tok_student,
+        vec![("note", None, "", b"x".to_vec())],
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "missing_photo");
+
+    // truncated multipart body -> bad_multipart
+    let req = axum::http::Request::builder()
+        .method("POST")
+        .uri("/api/student/sessions/finish")
+        .header("authorization", format!("Bearer {tok_student}"))
+        .header("content-type", "multipart/form-data; boundary=B")
+        .body(axum::body::Body::from(
+            b"--B\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"p.jpg\"\r\n\r\n\xff\xd8"
+                .to_vec(),
+        ))
+        .unwrap();
+    let resp = app.app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    // photo only, no QR -> accepted
+    let (st, v) = finish_photo_only(&app.app, &tok_student).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "pending_confirmation");
+}
+
+#[sqlx::test]
+async fn parallel_double_start_gives_conflict_not_500(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let qr = open_qr(&app.app, &tok_kom, "light").await;
+    let body = Some(json!({"qr": qr}));
+    let (a, b) = tokio::join!(
+        call(&app.app, "POST", "/api/student/sessions/start", Some(&tok_student), body.clone()),
+        call(&app.app, "POST", "/api/student/sessions/start", Some(&tok_student), body.clone()),
+    );
+    let mut codes = [a.0, b.0];
+    codes.sort();
+    assert_eq!(codes, [StatusCode::OK, StatusCode::CONFLICT], "{} / {}", a.1, b.1);
+}
+
+#[sqlx::test]
+async fn photo_review_approve_keeps_credit_and_reject_needs_comment(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, _t, _k, student) = setup(&app, &pool).await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let sid = credited_session(&app, &tok_student, &tok_kom, 3600).await;
+    assert_eq!(debt_balance(&pool, student).await, (0, 60));
+
+    // admin sees it in the review queue
+    let (_, v) = call(&app.app, "GET", "/api/admin/sessions?photo_review=pending", Some(&tok_admin), None).await;
+    assert_eq!(v["total"], 1);
+
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        &format!("/api/admin/sessions/{sid}/photo-review"),
+        Some(&tok_admin),
+        Some(json!({"approved": false, "comment": "  "})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "comment_required");
+
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        &format!("/api/admin/sessions/{sid}/photo-review"),
+        Some(&tok_admin),
+        Some(json!({"approved": true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["photo_review"], "approved");
+    assert_eq!(debt_balance(&pool, student).await, (0, 60));
+}
+
+#[sqlx::test]
+async fn admin_adjust_bounds_and_negative(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, _t, _k, student) = setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    set_debt_balance(&pool, student, 30, 10).await;
+    let path = format!("/api/admin/users/{student}/adjust");
+
+    let (st, v) = call(&app.app, "POST", &path, Some(&tok_admin),
+        Some(json!({"debt_delta": 20, "balance_delta": -10, "reason": "правка"}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(debt_balance(&pool, student).await, (50, 0));
+
+    let (st, v) = call(&app.app, "POST", &path, Some(&tok_admin),
+        Some(json!({"debt_delta": -51, "balance_delta": 0, "reason": "x"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "negative_amount");
+
+    let (st, v) = call(&app.app, "POST", &path, Some(&tok_admin),
+        Some(json!({"debt_delta": i64::MAX, "balance_delta": 0, "reason": "x"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "invalid_amount");
+    assert_eq!(debt_balance(&pool, student).await, (50, 0));
+}
+
+#[sqlx::test]
+async fn teacher_assign_hours_only_debtors_and_notified(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, teacher, _k, student) = setup(&app, &pool).await;
+    let tok_teacher = login(&app.app, "teach1").await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let path = format!("/api/students/{student}/assignments");
+
+    // no reason needed
+    let (st, v) = call(&app.app, "POST", &path, Some(&tok_teacher), Some(json!({"minutes": 120}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // too much / overflow
+    for minutes in [0, 100 * 60 + 1, i64::MAX] {
+        let (st, v) = call(&app.app, "POST", &path, Some(&tok_teacher), Some(json!({"minutes": minutes}))).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{minutes}: {v}");
+    }
+    let (_, v) = call(&app.app, "GET", "/api/students/debtors", Some(&tok_teacher), None).await;
+    assert_eq!(v["total"], 1, "{v}");
+    assert_eq!(v["items"][0]["debt_minutes"], 120);
+
+    credited_session(&app, &tok_student, &tok_kom, 3600).await;
+    let body: String = sqlx::query_scalar(
+        "SELECT body FROM notifications WHERE user_id = $1 AND kind = 'debt_worked_off'",
+    )
+    .bind(teacher)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(body.contains("1ч 0м"), "{body}");
+}
+
+#[sqlx::test]
+async fn delete_reward_with_orders_is_conflict(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, _t, _k, student) = setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let tok_student = login(&app.app, "stud1").await;
+    let (_, v) = call(&app.app, "POST", "/api/admin/rewards", Some(&tok_admin),
+        Some(json!({"title": "Кружка", "price_minutes": 10}))).await;
+    let rid = v["id"].as_str().unwrap().to_string();
+    set_debt_balance(&pool, student, 0, 10).await;
+    let (st, _) = call(&app.app, "POST", &format!("/api/rewards/{rid}/buy"), Some(&tok_student), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, v) = call(&app.app, "DELETE", &format!("/api/admin/rewards/{rid}"), Some(&tok_admin), None).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "reward_has_orders");
+    // invalid update is a 400, not a DB CHECK 500
+    let (st, _) = call(&app.app, "PATCH", &format!("/api/admin/rewards/{rid}"), Some(&tok_admin),
+        Some(json!({"title": "", "price_minutes": -1}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[sqlx::test]
+async fn admin_self_role_and_last_admin_guard(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (admin, _t, _k, _s) = setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let (st, v) = call(&app.app, "PATCH", &format!("/api/admin/users/{admin}"), Some(&tok_admin),
+        Some(json!({"role": "student"}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "self_role_change");
+}
+
+#[sqlx::test]
+async fn password_reset_and_change_revoke_old_tokens(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, _t, _k, student) = setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let old = login(&app.app, "stud1").await;
+    app.clock.advance_seconds(5);
+
+    let (st, v) = call(&app.app, "POST", &format!("/api/admin/users/{student}/reset-password"),
+        Some(&tok_admin), None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let new_pwd = v["password"].as_str().unwrap().to_string();
+    let (st, _) = call(&app.app, "GET", "/api/me", Some(&old), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED, "token from before the reset is revoked");
+
+    let (st, v) = call(&app.app, "POST", "/api/auth/login", None,
+        Some(json!({"login": "stud1", "password": new_pwd}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let tok = v["token"].as_str().unwrap().to_string();
+    app.clock.advance_seconds(5);
+
+    // own password change returns a fresh token; the previous one dies
+    let (st, v) = call(&app.app, "POST", "/api/me/password", Some(&tok),
+        Some(json!({"old_password": new_pwd, "new_password": "пароль"}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let fresh = v["token"].as_str().unwrap().to_string();
+    let (st, _) = call(&app.app, "GET", "/api/me", Some(&tok), None).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+    let (st, _) = call(&app.app, "GET", "/api/me", Some(&fresh), None).await;
+    assert_eq!(st, StatusCode::OK);
+}
+
+#[sqlx::test]
+async fn logins_are_case_insensitive(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let (st, v) = call(&app.app, "POST", "/api/admin/users", Some(&tok_admin),
+        Some(json!({"role": "student", "login": " Ivan ", "password": "secret1", "full_name": "Иван"}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["user"]["login"], "ivan");
+
+    let (st, _) = call(&app.app, "POST", "/api/auth/login", None,
+        Some(json!({"login": "IVAN", "password": "secret1"}))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, v) = call(&app.app, "POST", "/api/admin/users", Some(&tok_admin),
+        Some(json!({"role": "student", "login": "iVaN", "full_name": "Дубль"}))).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+
+    let csv = "Иван Второй,IVAN,,студент,\n";
+    let (st, v) = call_multipart(&app.app, "/api/admin/users/import", &tok_admin,
+        vec![("file", Some("u.csv"), "text/csv", csv.as_bytes().to_vec())]).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v["results"][0]["ok"], false, "{v}");
+}
+
+#[sqlx::test]
+async fn admin_resolves_stuck_pending_session(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    let (_a, _t, kom, student) = setup(&app, &pool).await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let qr = open_qr(&app.app, &tok_kom, "light").await;
+    let v = start_session(&app.app, &tok_student, &qr).await;
+    let sid = v["id"].as_str().unwrap().to_string();
+    app.clock.advance_seconds(1800);
+    finish_photo_only(&app.app, &tok_student).await;
+    // komendant leaves: the session would block the student forever
+    sqlx::query("UPDATE users SET is_active = FALSE WHERE id = $1").bind(kom).execute(&pool).await.unwrap();
+
+    let path = format!("/api/admin/sessions/{sid}/resolve");
+    let (st, _) = call(&app.app, "POST", &path, Some(&tok_admin), Some(json!({"confirm": false}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "reject needs a reason");
+    let (st, v) = call(&app.app, "POST", &path, Some(&tok_admin), Some(json!({"confirm": true}))).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "credited");
+    assert_eq!(v["photo_review"], "pending");
+    assert_eq!(debt_balance(&pool, student).await, (0, 30));
+}
+
+#[sqlx::test]
+async fn groups_report_student_count(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let (st, v) = call(&app.app, "GET", "/api/groups", Some(&tok_admin), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(v[0]["student_count"], 1, "{v}");
+}
+
+#[sqlx::test]
+async fn static_admin_cache_headers(pool: PgPool) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
+    std::fs::write(tmp.path().join("index.html"), "<html></html>").unwrap();
+    std::fs::write(tmp.path().join("assets/app-abc123.js"), "x").unwrap();
+    let dir = tmp.path().to_path_buf();
+    let app = make_app_with(pool, Utc::now(), move |c| c.static_dir = Some(dir)).await;
+    for (path, cache) in [
+        ("/", "no-cache"),
+        ("/users", "no-cache"),
+        ("/assets/app-abc123.js", "public, max-age=31536000, immutable"),
+    ] {
+        let req = axum::http::Request::builder().uri(path).body(axum::body::Body::empty()).unwrap();
+        let resp = app.app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{path}");
+        assert_eq!(resp.headers()["cache-control"], cache, "{path}");
+        assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+    }
 }

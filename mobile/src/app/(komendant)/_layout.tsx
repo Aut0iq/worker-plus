@@ -1,17 +1,14 @@
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { Redirect, Tabs } from 'expo-router';
 import { useAuth } from '@/auth';
+import { tabIcon } from '@/components/Icon';
 import { useUnreadCount } from '@/screens/NotificationsScreen';
-import { colors } from '@/theme';
-
-const icon = (e: string) =>
-  function TabIcon() {
-    return <Text style={{ fontSize: 20 }}>{e}</Text>;
-  };
+import { useColors } from '@/theme';
 
 export default function KomendantLayout() {
   const { user, ready } = useAuth();
   const unread = useUnreadCount();
+  const colors = useColors();
   if (!ready) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
@@ -22,18 +19,18 @@ export default function KomendantLayout() {
   if (!user || user.role !== 'komendant') return <Redirect href="/" />;
   return (
     <Tabs screenOptions={{ tabBarActiveTintColor: colors.primary }}>
-      <Tabs.Screen name="index" options={{ title: 'QR', tabBarIcon: icon('🔳') }} />
-      <Tabs.Screen name="sessions" options={{ title: 'Отработки', tabBarIcon: icon('⏱') }} />
-      <Tabs.Screen name="history" options={{ title: 'История', tabBarIcon: icon('📋') }} />
+      <Tabs.Screen name="index" options={{ title: 'QR', tabBarIcon: tabIcon('qr') }} />
+      <Tabs.Screen name="sessions" options={{ title: 'Отработки', tabBarIcon: tabIcon('timer') }} />
+      <Tabs.Screen name="history" options={{ title: 'История', tabBarIcon: tabIcon('history') }} />
       <Tabs.Screen
         name="notifications"
         options={{
           title: 'Уведомления',
-          tabBarIcon: icon('🔔'),
+          tabBarIcon: tabIcon('bell'),
           tabBarBadge: unread > 0 ? unread : undefined,
         }}
       />
-      <Tabs.Screen name="profile" options={{ title: 'Профиль', tabBarIcon: icon('👤') }} />
+      <Tabs.Screen name="profile" options={{ title: 'Профиль', tabBarIcon: tabIcon('person') }} />
     </Tabs>
   );
 }

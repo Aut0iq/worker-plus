@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '@/api/client';
+import { api, errorText } from '@/api/client';
 import type { ActiveSessionResponse } from '@/api/types/ActiveSessionResponse';
 import type { SessionDto } from '@/api/types/SessionDto';
 import type { UserDto } from '@/api/types/UserDto';
@@ -18,9 +18,11 @@ import { fmtClock, fmtMinutes } from '@/format';
 import { difficultyLabels } from '@/labels';
 import { Scanner } from '@/components/Scanner';
 import { Button, Card, ErrorText } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
 export default function StudentHome() {
+  const colors = useColors();
+  const styles = useStyles();
   const { config } = useAuth();
   const qc = useQueryClient();
   const [scanning, setScanning] = useState(false);
@@ -77,7 +79,7 @@ export default function StudentHome() {
     },
     onError: (e) => {
       setScanning(false);
-      setErr(e instanceof ApiError ? e.message : 'Ошибка');
+      setErr(errorText(e));
     },
   });
 
@@ -143,7 +145,7 @@ export default function StudentHome() {
             Лимит — {maxHours} ч реального времени. Если превысить, отработка не засчитается.
             {overLimit ? ' Лимит превышен!' : ''}
           </Text>
-          <Button title="Завершить" onPress={() => router.push('/finish')} />
+          <Button title="Завершить (сфотографировать работу)" onPress={() => router.push('/finish')} />
         </Card>
       )}
 
@@ -167,7 +169,8 @@ export default function StudentHome() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   money: { flexDirection: 'row' },
   moneyLabel: { fontSize: 12, color: colors.muted },
@@ -177,4 +180,4 @@ const styles = StyleSheet.create({
   timer: { fontSize: 44, fontWeight: '700', color: colors.text, textAlign: 'center', marginVertical: 8 },
   sub: { fontSize: 13, color: colors.muted, textAlign: 'center' },
   notice: { fontSize: 12, color: colors.muted, textAlign: 'center', marginVertical: 12 },
-});
+}));

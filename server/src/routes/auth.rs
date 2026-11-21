@@ -5,7 +5,7 @@ use chrono::Duration;
 use serde_json::json;
 use std::sync::MutexGuard;
 
-use crate::auth::{encode_token, verify_password};
+use crate::auth::{encode_token, normalize_login, verify_password_blocking};
 use crate::dto::{LoginRequest, LoginResponse};
 use crate::error::{AppError, AppResult};
 use crate::models::Role;
@@ -15,6 +15,9 @@ use crate::state::{AppState, AuditRecord, LoginAttemptMap};
 use super::ClientIp;
 
 const MAX_FAILED_LOGINS: u32 = 10;
+/// Per-IP cap across all logins: stops one IP spraying a few passwords on every account.
+/// Generous on purpose: a whole class may log in from one school NAT address.
+const MAX_FAILED_PER_IP: u32 = 50;
 const LOGIN_WINDOW: Duration = Duration::minutes(15);
 const MAX_TRACKED_KEYS: usize = 10_000;
 
@@ -31,32 +34,34 @@ async fn login(
     ip: ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<LoginResponse>> {
-    let key = format!(
-        "{}|{}",
-        ip.0.as_deref().unwrap_or("-"),
-        req.login.trim().to_lowercase()
-    );
+    let login_norm = normalize_login(&req.login);
+    let ip_s = ip.0.as_deref().unwrap_or("-");
+    let key = format!("{ip_s}|{login_norm}");
+    let ip_key = format!("{ip_s}|*");
     let now = state.clock.now();
+    // audit only a bounded prefix: people sometimes type the password into the login field
+    let login_logged: String = req.login.chars().take(64).collect();
 
     let blocked_minutes = {
         let mut attempts = lock_attempts(&state);
         if attempts.len() > MAX_TRACKED_KEYS {
             attempts.retain(|_, (_, start)| now - *start < LOGIN_WINDOW);
         }
-        match attempts.get(&key) {
-            Some((count, start)) if *count >= MAX_FAILED_LOGINS && now - *start < LOGIN_WINDOW => {
+        let blocked = |k: &str, max: u32| match attempts.get(k) {
+            Some((count, start)) if *count >= max && now - *start < LOGIN_WINDOW => {
                 let remaining = LOGIN_WINDOW - (now - *start);
                 Some(((remaining.num_seconds() + 59) / 60).max(1))
             }
             _ => None,
-        }
+        };
+        blocked(&key, MAX_FAILED_LOGINS).or_else(|| blocked(&ip_key, MAX_FAILED_PER_IP))
     };
     if let Some(mins) = blocked_minutes {
         state
             .audit(
                 &state.pool,
                 AuditRecord::new("login_blocked")
-                    .details(json!({"login": req.login}))
+                    .details(json!({"login": login_logged}))
                     .ip(ip.0.as_deref()),
             )
             .await?;
@@ -67,30 +72,33 @@ async fn login(
     }
 
     let row = sqlx::query_as::<_, UserRow>(sqlx::AssertSqlSafe(format!("{USER_SELECT} WHERE u.login = $1")))
-        .bind(&req.login)
+        .bind(&login_norm)
         .fetch_optional(&state.pool)
         .await?;
 
-    let ok = match &row {
-        Some(r) => verify_password(&req.password, &r.u.password_hash),
-        None => false,
-    };
+    let ok = verify_password_blocking(
+        req.password.clone(),
+        row.as_ref().map(|r| r.u.password_hash.clone()),
+    )
+    .await;
     let active = row.as_ref().map(|r| r.u.is_active).unwrap_or(false);
 
     if !ok || !active {
         {
             let mut attempts = lock_attempts(&state);
-            let entry = attempts.entry(key.clone()).or_insert((0, now));
-            if now - entry.1 >= LOGIN_WINDOW {
-                *entry = (0, now);
+            for k in [key.clone(), ip_key] {
+                let entry = attempts.entry(k).or_insert((0, now));
+                if now - entry.1 >= LOGIN_WINDOW {
+                    *entry = (0, now);
+                }
+                entry.0 += 1;
             }
-            entry.0 += 1;
         }
         state
             .audit(
                 &state.pool,
                 AuditRecord::new("login_failure")
-                    .details(json!({"login": req.login}))
+                    .details(json!({"login": login_logged}))
                     .ip(ip.0.as_deref()),
             )
             .await?;

@@ -7,11 +7,13 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # only this job publishes the GitHub Release
     timeout-minutes: 60
     defaults:
       run:
@@ -34,7 +36,22 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [ "$GITHUB_REF_TYPE" = tag ] || VERSION="0.0.0"
           node -e "const fs=require('fs'),f='app.json',j=JSON.parse(fs.readFileSync(f));j.expo.version=process.argv[1];j.expo.android.versionCode=Number(process.argv[2]);fs.writeFileSync(f,JSON.stringify(j,null,2))" "$VERSION" "$GITHUB_RUN_NUMBER"
-          echo "APK=prila-$VERSION.apk" >> "$GITHUB_ENV"
+          echo "APK=worker-plus-$VERSION.apk" >> "$GITHUB_ENV"
+      # Push notifications need an EAS project id (expo.dev) and Firebase config for
+      # Android. Both are optional: without them the APK builds, but has no push.
+      - name: Push config (EAS project id, google-services.json)
+        env:
+          EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > google-services.json
+            echo "GOOGLE_SERVICES_FILE=./google-services.json" >> "$GITHUB_ENV"
+          else
+            echo "::warning::GOOGLE_SERVICES_JSON secret is not set: Android push will not work"
+          fi
+          [ -n "$EAS_PROJECT_ID" ] && echo "EAS_PROJECT_ID=$EAS_PROJECT_ID" >> "$GITHUB_ENV" \
+            || echo "::warning::EAS_PROJECT_ID secret is not set: push token will not be registered"
       - run: npx expo prebuild -p android --no-install
       # shortcut: arm64 only (all current phones); add armeabi-v7a if old 32-bit devices must be supported
       - run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
@@ -53,8 +70,8 @@ jobs:
           rm "$RUNNER_TEMP/release.jks"
       - uses: actions/upload-artifact@v4
         with:
-          name: prila-apk
-          path: mobile/prila-*.apk
+          name: worker-plus-apk
+          path: mobile/worker-plus-*.apk
       - uses: softprops/action-gh-release@v2
         if: github.ref_type == 'tag'
         with:

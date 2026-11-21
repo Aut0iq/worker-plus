@@ -13,8 +13,10 @@ pub mod routes;
 pub mod state;
 pub mod summaries;
 
-use axum::extract::DefaultBodyLimit;
-use axum::http::HeaderValue;
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::http::{header, HeaderValue};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::Router;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
@@ -38,9 +40,12 @@ pub fn build_app(state: AppState) -> Router {
     let app = Router::new().nest("/api", api);
 
     let app = match &state.config.static_dir {
-        Some(dir) if dir.join("index.html").exists() => app.fallback_service(
-            ServeDir::new(dir).not_found_service(ServeFile::new(dir.join("index.html"))),
-        ),
+        Some(dir) if dir.join("index.html").exists() => app
+            .fallback_service(
+                // `fallback`, not `not_found_service`: SPA routes must answer 200, not 404
+                ServeDir::new(dir).fallback(ServeFile::new(dir.join("index.html"))),
+            )
+            .layer(middleware::from_fn(static_cache_headers)),
         _ => app,
     };
 
@@ -62,7 +67,38 @@ pub fn build_app(state: AppState) -> Router {
             .allow_headers(Any)
     };
 
-    app.layer(TraceLayer::new_for_http())
+    app.layer(middleware::from_fn(security_headers))
+        .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state)
+}
+
+/// Admin SPA caching: `index.html` (and every SPA route that falls back to it)
+/// must be revalidated on each load, otherwise browsers keep a stale bundle after
+/// a redeploy; hashed `/assets/*` files never change and can be cached forever.
+async fn static_cache_headers(req: Request, next: Next) -> Response {
+    let path = req.uri().path().to_owned();
+    let mut resp = next.run(req).await;
+    if path == "/api" || path.starts_with("/api/") {
+        return resp;
+    }
+    let value = if path.starts_with("/assets/") && resp.status().is_success() {
+        "public, max-age=31536000, immutable"
+    } else {
+        "no-cache"
+    };
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static(value));
+    resp
+}
+
+/// Defence-in-depth headers for every response (API and admin SPA).
+/// HSTS is left to the HTTPS proxy (Caddy): over plain HTTP it is meaningless.
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    h.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    h.insert(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer"));
+    resp
 }

@@ -45,6 +45,36 @@ pub fn revert(applied_to_debt: i64, applied_to_balance: i64, balance: i64) -> Re
     }
 }
 
+/// Upper bound for a single teacher assignment: 100 hours (matches the app UI).
+pub const MAX_ASSIGN_MINUTES: i64 = 100 * 60;
+/// Upper bound for one manual admin correction / reward price (in minutes).
+pub const MAX_ADJUST_MINUTES: i64 = 100_000;
+/// Upper bound for reward stock.
+pub const MAX_STOCK: i64 = 1_000_000;
+
+/// Human-readable minutes as in the UI: 104 -> "1ч 44м", 45 -> "45м", -59 -> "-59м".
+pub fn fmt_minutes(m: i64) -> String {
+    let sign = if m < 0 { "-" } else { "" };
+    let a = m.unsigned_abs();
+    let (h, mm) = (a / 60, a % 60);
+    if h > 0 {
+        format!("{sign}{h}ч {mm}м")
+    } else {
+        format!("{sign}{mm}м")
+    }
+}
+
+/// Content type for a stored image by its extension (as produced by `sniff_image_ext`).
+pub fn image_mime(ext: &str) -> &'static str {
+    match ext {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "webp" => "image/webp",
+        "heic" => "image/heic",
+        _ => "application/octet-stream",
+    }
+}
+
 /// Detect an image type by magic bytes and return its file extension.
 /// Supports jpeg, png, webp and heic/heif — matches the accepted photo formats.
 pub fn sniff_image_ext(data: &[u8]) -> Option<&'static str> {
@@ -100,6 +130,23 @@ mod tests {
         assert_eq!(sniff_image_ext(b"\x00\x00\x00\x18ftypmp41\x00"), None);
         assert_eq!(sniff_image_ext(b"GIF89a"), None);
         assert_eq!(sniff_image_ext(b""), None);
+    }
+
+    #[test]
+    fn minutes_format() {
+        assert_eq!(fmt_minutes(104), "1ч 44м");
+        assert_eq!(fmt_minutes(120), "2ч 0м");
+        assert_eq!(fmt_minutes(45), "45м");
+        assert_eq!(fmt_minutes(0), "0м");
+        assert_eq!(fmt_minutes(-59), "-59м");
+        assert_eq!(fmt_minutes(-61), "-1ч 1м");
+    }
+
+    #[test]
+    fn mime_by_ext() {
+        assert_eq!(image_mime("heic"), "image/heic");
+        assert_eq!(image_mime("jpg"), "image/jpeg");
+        assert_eq!(image_mime("exe"), "application/octet-stream");
     }
 
     #[test]

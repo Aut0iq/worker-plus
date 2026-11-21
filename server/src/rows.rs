@@ -1,7 +1,7 @@
 use sqlx::FromRow;
 
-use crate::dto::{AssignmentDto, OrderDto, SessionDto, UserDto};
-use crate::models::{Assignment, Order, User, WorkSession};
+use crate::dto::{AssignmentDto, GroupDto, OrderDto, SessionDto, UserDto};
+use crate::models::{Assignment, Group, Order, User, WorkSession};
 
 pub const SESSION_SELECT: &str = "
     SELECT s.*, st.full_name AS student_name, g.name AS group_name,
@@ -124,5 +124,24 @@ impl From<OrderRow> for OrderDto {
             issued_at: r.o.issued_at,
             created_at: r.o.created_at,
         }
+    }
+}
+
+pub const GROUP_SELECT: &str = "
+    SELECT g.*,
+           (SELECT count(*) FROM users u
+             WHERE u.group_id = g.id AND u.role = 'student' AND u.is_active) AS student_count
+    FROM groups g";
+
+#[derive(FromRow)]
+pub struct GroupRow {
+    #[sqlx(flatten)]
+    pub g: Group,
+    pub student_count: i64,
+}
+
+impl From<GroupRow> for GroupDto {
+    fn from(r: GroupRow) -> Self {
+        GroupDto::of(r.g, r.student_count)
     }
 }

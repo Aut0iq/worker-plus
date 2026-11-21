@@ -8,16 +8,18 @@ import { useAuth } from '@/auth';
 import { fmtClock, fmtMinutes, fmtTs } from '@/format';
 import { difficultyLabels, sessionStatusLabels } from '@/labels';
 import { Button, Card, Empty, ErrorText, Field } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
+
+const MAX_HOURS = 100;
 
 export default function StudentCard() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const colors = useColors();
+  const styles = useStyles();
   const { config } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const qc = useQueryClient();
   const [hours, setHours] = useState('');
-  const [mins, setMins] = useState('');
-  const [reason, setReason] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
   const q = useQuery({
@@ -26,24 +28,28 @@ export default function StudentCard() {
   });
 
   const assign = useMutation({
-    mutationFn: (v: { minutes: number; reason: string }) =>
-      api.post(`/api/students/${id}/assignments`, v),
+    mutationFn: (minutes: number) => api.post(`/api/students/${id}/assignments`, { minutes }),
     onSuccess: () => {
       setHours('');
-      setMins('');
-      setReason('');
       setErr(null);
       void qc.invalidateQueries({ queryKey: ['student', id] });
+      void qc.invalidateQueries({ queryKey: ['debtors'] });
+      void qc.invalidateQueries({ queryKey: ['group-students'] });
       Alert.alert('Готово', 'Часы назначены');
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Ошибка'),
   });
 
+  // whole hours only; a typo like 100 instead of 10 gets a confirmation first
   const submit = () => {
-    const total = (parseInt(hours || '0', 10) || 0) * 60 + (parseInt(mins || '0', 10) || 0);
-    if (total <= 0) return setErr('Укажите время больше 0');
-    if (!reason.trim()) return setErr('Укажите причину');
-    assign.mutate({ minutes: total, reason: reason.trim() });
+    const h = Number(hours.trim());
+    if (!Number.isInteger(h) || h <= 0) return setErr('Укажите целое число часов больше 0');
+    if (h > MAX_HOURS) return setErr(`Не больше ${MAX_HOURS} ч за раз`);
+    setErr(null);
+    Alert.alert('Назначить часы?', `${q.data?.user.full_name ?? 'Студент'}: ${h} ч`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Назначить', onPress: () => assign.mutate(h * 60) },
+    ]);
   };
 
   const u = q.data?.user;
@@ -75,31 +81,13 @@ export default function StudentCard() {
 
       <Card>
         <Text style={styles.section}>Назначить часы</Text>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          <View style={{ flex: 1 }}>
-            <Field
-              label="Часы (0–100)"
-              value={hours}
-              onChangeText={setHours}
-              keyboardType="number-pad"
-              placeholder="0"
-            />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Field
-              label="Минуты (0–59)"
-              value={mins}
-              onChangeText={setMins}
-              keyboardType="number-pad"
-              placeholder="0"
-            />
-          </View>
-        </View>
         <Field
-          label="Причина (обязательно)"
-          value={reason}
-          onChangeText={setReason}
-          placeholder="За что назначаются часы"
+          label={`Часы (1–${MAX_HOURS})`}
+          value={hours}
+          onChangeText={(t) => setHours(t.replace(/[^0-9]/g, ''))}
+          keyboardType="number-pad"
+          placeholder="0"
+          maxLength={3}
         />
         <ErrorText>{err}</ErrorText>
         <Button title="Назначить" loading={assign.isPending} onPress={submit} />
@@ -133,8 +121,10 @@ export default function StudentCard() {
         {assignments.map((a) => (
           <View key={a.id} style={styles.row}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.rowTitle}>{a.reason}</Text>
-              <Text style={styles.sub}>{fmtTs(a.created_at, tz)}</Text>
+              <Text style={styles.rowTitle}>{a.reason || 'Назначено'}</Text>
+              <Text style={styles.sub}>
+                {a.assigned_by_name ?? '—'} · {fmtTs(a.created_at, tz)}
+              </Text>
             </View>
             <Text style={{ color: colors.primary, fontWeight: '600' }}>
               {fmtMinutes(a.minutes)}
@@ -146,7 +136,8 @@ export default function StudentCard() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   name: { fontSize: 20, fontWeight: '700', color: colors.text },
   sub: { fontSize: 13, color: colors.muted, marginTop: 2 },
@@ -162,4 +153,4 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   rowTitle: { fontSize: 14, color: colors.text },
-});
+}));

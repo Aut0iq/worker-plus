@@ -11,9 +11,11 @@ import { fmtMinutes, fmtTs } from '@/format';
 import { orderStatusLabels } from '@/labels';
 import { AuthImage } from '@/components/AuthImage';
 import { Button, Card, Empty, ErrorText } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
 export default function Shop() {
+  const colors = useColors();
+  const styles = useStyles();
   const { config } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const qc = useQueryClient();
@@ -126,7 +128,8 @@ export default function Shop() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   tabs: {
     flexDirection: 'row',
@@ -141,4 +144,4 @@ const styles = StyleSheet.create({
   img: { width: 72, height: 72, borderRadius: 8, backgroundColor: colors.border },
   title: { fontSize: 15, fontWeight: '600', color: colors.text },
   sub: { fontSize: 12, color: colors.muted, marginTop: 3 },
-});
+}));

@@ -45,15 +45,18 @@ impl UserDto {
 pub struct GroupDto {
     pub id: Uuid,
     pub name: String,
+    // active students in the group
+    pub student_count: i64,
     #[ts(type = "string")]
     pub created_at: DateTime<Utc>,
 }
 
-impl From<Group> for GroupDto {
-    fn from(g: Group) -> Self {
+impl GroupDto {
+    pub fn of(g: Group, student_count: i64) -> Self {
         GroupDto {
             id: g.id,
             name: g.name,
+            student_count,
             created_at: g.created_at,
         }
     }
@@ -151,11 +154,22 @@ pub struct PhotoReviewRequest {
     pub comment: Option<String>,
 }
 
+// Admin decision on a session stuck in `pending_confirmation`
+// (komendant deactivated / unavailable): confirm = credit as the komendant would.
+#[derive(Deserialize, TS)]
+#[ts(export, export_to = "../shared/api-types/")]
+pub struct AdminResolveSessionRequest {
+    pub confirm: bool,
+    pub reason: Option<String>,
+}
+
 #[derive(Deserialize, TS)]
 #[ts(export, export_to = "../shared/api-types/")]
 pub struct AssignmentCreateRequest {
     pub minutes: i64,
-    pub reason: String,
+    // optional: teachers assign hours without a reason
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 #[derive(Serialize, TS)]
@@ -229,8 +243,20 @@ pub struct UserUpdateRequest {
     pub role: Option<Role>,
     pub login: Option<String>,
     pub full_name: Option<String>,
+    // absent = keep, `null` = remove from group, uuid = move to group
+    #[serde(default, deserialize_with = "double_option", skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub group_id: Option<Option<Uuid>>,
     pub is_active: Option<bool>,
+}
+
+/// Distinguish a missing field (None) from an explicit `null` (Some(None)).
+fn double_option<'de, D, T>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(de).map(Some)
 }
 
 #[derive(Serialize, TS)]

@@ -7,9 +7,11 @@ import { useAuth } from '@/auth';
 import { fmtClock, fmtMinutes, fmtTs } from '@/format';
 import { difficultyLabels, sessionStatusLabels } from '@/labels';
 import { Empty } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
 export default function KomendantHistory() {
+  const colors = useColors();
+  const styles = useStyles();
   const { config } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const q = useInfiniteQuery({
@@ -54,7 +56,8 @@ export default function KomendantHistory() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -68,4 +71,4 @@ const styles = StyleSheet.create({
   title: { fontSize: 14, fontWeight: '600', color: colors.text },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
   status: { fontSize: 12, fontWeight: '600', marginLeft: 8, maxWidth: 110, textAlign: 'right' },
-});
+}));

@@ -133,11 +133,7 @@ async fn reward_image(State(state): State<AppState>, Path(id): Path<Uuid>) -> Ap
     let bytes = tokio::fs::read(state.config.photo_dir.join("rewards").join(&rel))
         .await
         .map_err(|_| AppError::not_found("Изображение не найдено"))?;
-    let mime = match rel.rsplit('.').next().unwrap_or("") {
-        "png" => "image/png",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
-    };
+    let mime = crate::domain::image_mime(rel.rsplit('.').next().unwrap_or(""));
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
     Ok((StatusCode::OK, headers, bytes).into_response())

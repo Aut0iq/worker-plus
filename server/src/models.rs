@@ -105,6 +105,7 @@ pub struct User {
     pub balance_minutes: i64,
     pub is_active: bool,
     pub created_at: DateTime<Utc>,
+    pub password_changed_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, FromRow)]

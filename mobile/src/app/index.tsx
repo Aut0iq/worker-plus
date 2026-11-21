@@ -1,10 +1,11 @@
 import { ActivityIndicator, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '@/auth';
-import { colors } from '@/theme';
+import { useColors } from '@/theme';
 
 export default function Index() {
   const { user, ready } = useAuth();
+  const colors = useColors();
   if (!ready) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>

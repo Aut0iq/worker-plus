@@ -10,7 +10,7 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native';
-import { colors } from '../theme';
+import { makeStyles, useColors } from '../theme';
 
 export function Button({
   title,
@@ -30,6 +30,8 @@ export function Button({
   style?: StyleProp<ViewStyle>;
 }) {
   const off = disabled || loading;
+  const colors = useColors();
+  const styles = useStyles();
   return (
     <Pressable
       onPress={onPress}
@@ -53,19 +55,24 @@ export function Button({
 }
 
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
+  const styles = useStyles();
   return <View style={[styles.card, style]}>{children}</View>;
 }
 
 export function ErrorText({ children }: { children?: string | null }) {
+  const styles = useStyles();
   if (!children) return null;
   return <Text style={styles.error}>{children}</Text>;
 }
 
 export function Empty({ text }: { text: string }) {
+  const styles = useStyles();
   return <Text style={styles.empty}>{text}</Text>;
 }
 
 export function Field({ label, ...props }: { label: string } & TextInputProps) {
+  const colors = useColors();
+  const styles = useStyles();
   return (
     <View style={{ marginBottom: 12 }}>
       <Text style={styles.label}>{label}</Text>
@@ -82,7 +89,8 @@ export function Row({ children, style }: { children: ReactNode; style?: StylePro
   return <View style={[{ flexDirection: 'row', alignItems: 'center' }, style]}>{children}</View>;
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   btn: {
     backgroundColor: colors.primary,
     borderRadius: 10,
@@ -118,4 +126,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.text,
   },
-});
+}));

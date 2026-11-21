@@ -6,18 +6,19 @@ import type { NotificationDto } from '../api/types/NotificationDto';
 import { useAuth } from '../auth';
 import { fmtTs } from '../format';
 import { Button, Empty } from '../components/ui';
-import { colors } from '../theme';
+import { makeStyles } from '../theme';
 
 export function useUnreadCount() {
   const { data } = useQuery({
     queryKey: ['notifications-unread'],
-    queryFn: () => api.get<Paginated<NotificationDto>>('/api/notifications?page=1&per_page=100'),
+    queryFn: () => api.get<{ count: number }>('/api/notifications/unread-count'),
     refetchInterval: 30_000,
   });
-  return data?.items.filter((n) => !n.read_at).length ?? 0;
+  return data?.count ?? 0;
 }
 
 export function NotificationsScreen() {
+  const styles = useStyles();
   const { config } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const qc = useQueryClient();
@@ -85,7 +86,8 @@ export function NotificationsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   top: { padding: 12, paddingBottom: 0 },
   item: {
@@ -103,4 +105,4 @@ const styles = StyleSheet.create({
   body: { fontSize: 13, color: colors.muted, marginTop: 2 },
   ts: { fontSize: 11, color: colors.muted, marginTop: 4 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary, marginLeft: 8 },
-});
+}));

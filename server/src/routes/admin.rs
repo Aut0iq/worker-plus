@@ -7,7 +7,9 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::{hash_password, random_password, AdminUser};
+use crate::auth::{
+    hash_password_blocking, normalize_login, password_too_short, random_password, AdminUser,
+};
 use crate::domain;
 use crate::dto::*;
 use crate::error::{AppError, AppResult};
@@ -29,6 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/sessions", get(list_sessions))
         .route("/admin/sessions/{id}/photo", get(session_photo))
         .route("/admin/sessions/{id}/photo-review", post(photo_review))
+        .route("/admin/sessions/{id}/resolve", post(resolve_session))
         .route("/admin/rewards", post(create_reward))
         .route(
             "/admin/rewards/{id}",
@@ -47,6 +50,23 @@ pub fn router() -> Router<AppState> {
 }
 
 // ---------- users ----------
+
+/// Refuse to demote/deactivate the last active admin (nobody could log in to fix it).
+async fn ensure_other_active_admin(tx: &mut sqlx::PgConnection, except: Uuid) -> AppResult<()> {
+    let others: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM users WHERE role = 'admin' AND is_active AND id <> $1",
+    )
+    .bind(except)
+    .fetch_one(&mut *tx)
+    .await?;
+    if others == 0 {
+        return Err(AppError::bad_request(
+            "last_admin",
+            "Это последний активный администратор",
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 struct UsersQuery {
@@ -145,11 +165,9 @@ async fn create_user(
     auth: AdminUser,
     Json(req): Json<UserCreateRequest>,
 ) -> AppResult<Json<UserCreateResponse>> {
-    if req.login.trim().is_empty() || req.full_name.trim().is_empty() {
+    let login = normalize_login(&req.login);
+    if login.is_empty() || req.full_name.trim().is_empty() {
         return Err(AppError::bad_request("invalid_input", "Логин и ФИО обязательны"));
-    }
-    if req.role == Role::Student && req.group_id.is_none() {
-        // allowed, but group stays empty
     }
     let generated = req.password.is_none().then(random_password);
     let password = req
@@ -157,13 +175,13 @@ async fn create_user(
         .clone()
         .or_else(|| generated.clone())
         .unwrap();
-    if password.len() < 6 {
+    if password_too_short(&password) {
         return Err(AppError::bad_request(
             "weak_password",
             "Пароль должен содержать не менее 6 символов",
         ));
     }
-    let hash = hash_password(&password)?;
+    let hash = hash_password_blocking(password).await?;
 
     let mut tx = state.pool.begin().await?;
     let user = sqlx::query_as::<_, User>(
@@ -171,7 +189,7 @@ async fn create_user(
          VALUES ($1,$2,$3,$4,$5) RETURNING *",
     )
     .bind(req.role)
-    .bind(req.login.trim())
+    .bind(&login)
     .bind(&hash)
     .bind(req.full_name.trim())
     .bind(req.group_id)
@@ -218,6 +236,16 @@ async fn update_user(
         .ok_or_else(|| AppError::not_found("Пользователь не найден"))?;
 
     if let Some(role) = req.role {
+        // an admin demoting himself loses access on the very next request
+        if id == auth.user.id && role != Role::Admin {
+            return Err(AppError::bad_request(
+                "self_role_change",
+                "Нельзя изменить роль самому себе",
+            ));
+        }
+        if user.role == Role::Admin && role != Role::Admin {
+            ensure_other_active_admin(&mut tx, id).await?;
+        }
         sqlx::query("UPDATE users SET role = $1 WHERE id = $2")
             .bind(role)
             .bind(id)
@@ -225,11 +253,12 @@ async fn update_user(
             .await?;
     }
     if let Some(login) = &req.login {
-        if login.trim().is_empty() {
+        let login = normalize_login(login);
+        if login.is_empty() {
             return Err(AppError::bad_request("invalid_input", "Пустой логин"));
         }
         sqlx::query("UPDATE users SET login = $1 WHERE id = $2")
-            .bind(login.trim())
+            .bind(&login)
             .bind(id)
             .execute(&mut *tx)
             .await
@@ -241,6 +270,9 @@ async fn update_user(
             })?;
     }
     if let Some(name) = &req.full_name {
+        if name.trim().is_empty() {
+            return Err(AppError::bad_request("invalid_input", "Пустое ФИО"));
+        }
         sqlx::query("UPDATE users SET full_name = $1 WHERE id = $2")
             .bind(name.trim())
             .bind(id)
@@ -260,6 +292,9 @@ async fn update_user(
                 "self_deactivate",
                 "Нельзя деактивировать себя",
             ));
+        }
+        if !active && user.role == Role::Admin {
+            ensure_other_active_admin(&mut tx, id).await?;
         }
         sqlx::query("UPDATE users SET is_active = $1 WHERE id = $2")
             .bind(active)
@@ -297,6 +332,13 @@ async fn delete_user(
         ));
     }
     let mut tx = state.pool.begin().await?;
+    let role: Option<Role> = sqlx::query_scalar("SELECT role FROM users WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if role == Some(Role::Admin) {
+        ensure_other_active_admin(&mut tx, id).await?;
+    }
     let res = sqlx::query("UPDATE users SET is_active = FALSE WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
@@ -322,11 +364,15 @@ async fn reset_password(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<ResetPasswordResponse>> {
     let password = random_password();
-    let hash = hash_password(&password)?;
+    let hash = hash_password_blocking(password.clone()).await?;
     let mut tx = state.pool.begin().await?;
-    let res = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")
+    // password_changed_at revokes every token issued before the reset
+    let res = sqlx::query(
+        "UPDATE users SET password_hash = $1, password_changed_at = $3 WHERE id = $2",
+    )
         .bind(&hash)
         .bind(id)
+        .bind(state.clock.now())
         .execute(&mut *tx)
         .await?;
     if res.rows_affected() == 0 {
@@ -352,6 +398,13 @@ async fn adjust_user(
 ) -> AppResult<Json<UserDto>> {
     if req.reason.trim().is_empty() {
         return Err(AppError::bad_request("invalid_reason", "Укажите причину"));
+    }
+    let max = domain::MAX_ADJUST_MINUTES;
+    if req.debt_delta.unsigned_abs() > max as u64 || req.balance_delta.unsigned_abs() > max as u64 {
+        return Err(AppError::bad_request(
+            "invalid_amount",
+            format!("Изменение не может превышать {max} мин за раз"),
+        ));
     }
     let mut tx = state.pool.begin().await?;
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 FOR UPDATE")
@@ -422,10 +475,22 @@ async fn list_groups(
     State(state): State<AppState>,
     _auth: AdminUser,
 ) -> AppResult<Json<Vec<GroupDto>>> {
-    let groups = sqlx::query_as::<_, Group>("SELECT * FROM groups ORDER BY name")
-        .fetch_all(&state.pool)
-        .await?;
+    let groups = sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(format!(
+        "{GROUP_SELECT} ORDER BY g.name"
+    )))
+    .fetch_all(&state.pool)
+    .await?;
     Ok(Json(groups.into_iter().map(Into::into).collect()))
+}
+
+async fn group_dto(state: &AppState, id: Uuid) -> AppResult<GroupDto> {
+    let row = sqlx::query_as::<_, GroupRow>(sqlx::AssertSqlSafe(format!(
+        "{GROUP_SELECT} WHERE g.id = $1"
+    )))
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await?;
+    Ok(row.into())
 }
 
 #[derive(Deserialize)]
@@ -464,7 +529,7 @@ async fn create_group(
         )
         .await?;
     tx.commit().await?;
-    Ok(Json(g.into()))
+    Ok(Json(GroupDto::of(g, 0)))
 }
 
 async fn update_group(
@@ -473,6 +538,9 @@ async fn update_group(
     Path(id): Path<Uuid>,
     Json(req): Json<GroupUpsert>,
 ) -> AppResult<Json<GroupDto>> {
+    if req.name.trim().is_empty() {
+        return Err(AppError::bad_request("invalid_input", "Пустое название группы"));
+    }
     let mut tx = state.pool.begin().await?;
     let g = sqlx::query_as::<_, Group>(
         "UPDATE groups SET name = $1 WHERE id = $2 RETURNING *",
@@ -498,7 +566,7 @@ async fn update_group(
         )
         .await?;
     tx.commit().await?;
-    Ok(Json(g.into()))
+    Ok(Json(group_dto(&state, g.id).await?))
 }
 
 async fn delete_group(
@@ -515,7 +583,7 @@ async fn delete_group(
     if students > 0 {
         return Err(AppError::conflict(
             "group_in_use",
-            "В группе есть студенты",
+            format!("В группе {students} пользователей (включая неактивных) — сначала переведите их в другую группу"),
         ));
     }
     let res = sqlx::query("DELETE FROM groups WHERE id = $1")
@@ -642,27 +710,38 @@ async fn session_photo(
         .fetch_optional(&state.pool)
         .await?
         .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
-    let rel = session
-        .photo_path
-        .as_ref()
-        .ok_or_else(|| AppError::not_found("Фото отсутствует"))?;
-    if rel.contains('/') || rel.contains("..") {
-        return Err(AppError::internal("bad photo path"));
+    super::komendant::serve_photo(&state, &session).await
+}
+
+/// A session stuck in `pending_confirmation` blocks the student from starting a
+/// new one (one open session per student). The admin can decide in the
+/// komendant's place: confirm (credit) or reject with a reason.
+async fn resolve_session(
+    State(state): State<AppState>,
+    auth: AdminUser,
+    Path(id): Path<Uuid>,
+    Json(req): Json<AdminResolveSessionRequest>,
+) -> AppResult<Json<SessionDto>> {
+    let reason = req.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+    if !req.confirm && reason.is_none() {
+        return Err(AppError::bad_request("invalid_reason", "Укажите причину отклонения"));
     }
-    let ext = rel.rsplit('.').next().unwrap_or("");
-    let mime = match ext {
-        "png" => "image/png",
-        "heic" => "image/heic",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
+    let mut tx = state.pool.begin().await?;
+    let session = super::komendant::lock_pending_session(&mut tx, id).await?;
+    let pushes = if req.confirm {
+        super::komendant::credit_session(&state, &mut tx, &session, auth.user.id, "admin").await?
+    } else {
+        let reason = format!("{} (решение администратора)", reason.unwrap_or_default());
+        vec![
+            super::komendant::reject_pending(&state, &mut tx, &session, &reason, auth.user.id, "admin")
+                .await?,
+        ]
     };
-    let bytes = tokio::fs::read(state.config.photo_dir.join(rel))
-        .await
-        .map_err(|_| AppError::not_found("Фото не найдено на диске"))?;
-    let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, mime.parse().unwrap());
-    headers.insert(header::CACHE_CONTROL, "private, no-store".parse().unwrap());
-    Ok((StatusCode::OK, headers, bytes).into_response())
+    tx.commit().await?;
+    for (users, title, body) in pushes {
+        state.push_later(users, title, body, json!({"session_id": id}));
+    }
+    super::komendant::session_dto(&state, id).await.map(Json)
 }
 
 async fn photo_review(
@@ -680,6 +759,13 @@ async fn photo_review(
     .await?
     .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
 
+    let comment = req.comment.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    if !req.approved && comment.is_none() {
+        return Err(AppError::bad_request(
+            "comment_required",
+            "Укажите комментарий, почему фото не зачтено",
+        ));
+    }
     if session.status != SessionStatus::Credited || session.photo_review != Some(PhotoReview::Pending)
     {
         return Err(AppError::conflict(
@@ -693,7 +779,7 @@ async fn photo_review(
             "UPDATE work_sessions SET photo_review = 'approved', photo_review_comment = $1,
              photo_reviewed_by = $2, photo_reviewed_at = $3 WHERE id = $4",
         )
-        .bind(&req.comment)
+        .bind(comment)
         .bind(auth.user.id)
         .bind(state.clock.now())
         .bind(id)
@@ -723,7 +809,7 @@ async fn photo_review(
              reverted_from_balance = $4, reverted_to_debt = $5
              WHERE id = $6",
         )
-        .bind(&req.comment)
+        .bind(comment)
         .bind(auth.user.id)
         .bind(state.clock.now())
         .bind(rev.from_balance)
@@ -772,14 +858,33 @@ async fn photo_review(
 
 // ---------- rewards ----------
 
+/// Same rules for create and update; out-of-range values would otherwise hit
+/// the DB CHECK constraints and come back as a 500.
+fn validate_reward(req: &RewardUpsertRequest) -> AppResult<()> {
+    if req.title.trim().is_empty() {
+        return Err(AppError::bad_request("invalid_input", "Укажите название награды"));
+    }
+    if !(0..=domain::MAX_ADJUST_MINUTES).contains(&req.price_minutes) {
+        return Err(AppError::bad_request(
+            "invalid_input",
+            format!("Цена должна быть от 0 до {} мин", domain::MAX_ADJUST_MINUTES),
+        ));
+    }
+    if req.stock.is_some_and(|s| !(0..=domain::MAX_STOCK).contains(&s)) {
+        return Err(AppError::bad_request(
+            "invalid_input",
+            format!("Остаток должен быть от 0 до {}", domain::MAX_STOCK),
+        ));
+    }
+    Ok(())
+}
+
 async fn create_reward(
     State(state): State<AppState>,
     auth: AdminUser,
     Json(req): Json<RewardUpsertRequest>,
 ) -> AppResult<Json<RewardDto>> {
-    if req.title.trim().is_empty() || req.price_minutes < 0 {
-        return Err(AppError::bad_request("invalid_input", "Некорректные данные награды"));
-    }
+    validate_reward(&req)?;
     let mut tx = state.pool.begin().await?;
     let r = sqlx::query_as::<_, Reward>(
         "INSERT INTO rewards (title, description, price_minutes, stock, is_active)
@@ -811,6 +916,7 @@ async fn update_reward(
     Path(id): Path<Uuid>,
     Json(req): Json<RewardUpsertRequest>,
 ) -> AppResult<Json<RewardDto>> {
+    validate_reward(&req)?;
     let mut tx = state.pool.begin().await?;
     let r = sqlx::query_as::<_, Reward>(
         "UPDATE rewards SET title = $1, description = $2, price_minutes = $3,
@@ -847,7 +953,14 @@ async fn delete_reward(
     let res = sqlx::query("DELETE FROM rewards WHERE id = $1")
         .bind(id)
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(d) if d.is_foreign_key_violation() => AppError::conflict(
+                "reward_has_orders",
+                "По этой награде есть заказы — её нельзя удалить, снимите её с продажи (выключите «Активна»)",
+            ),
+            _ => AppError::from(e),
+        })?;
     if res.rows_affected() == 0 {
         return Err(AppError::not_found("Награда не найдена"));
     }
@@ -869,48 +982,73 @@ async fn upload_reward_image(
     Path(id): Path<Uuid>,
     mut multipart: Multipart,
 ) -> AppResult<Json<RewardDto>> {
-    let mut img: Option<(String, Vec<u8>)> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    let mut img: Option<Vec<u8>> = None;
+    loop {
+        let field = match multipart.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return Err(super::student::multipart_error(e)),
+        };
         if field.file_name().is_some() || field.name() == Some("image") {
-            let mime = field.content_type().unwrap_or("").to_string();
-            let data = field.bytes().await.map_err(|_| {
-                AppError::bad_request("bad_multipart", "Некорректные данные формы")
-            })?;
-            img = Some((mime, data.to_vec()));
+            img = Some(field.bytes().await.map_err(super::student::multipart_error)?.to_vec());
         }
     }
-    let (_mime, bytes) =
+    let bytes =
         img.ok_or_else(|| AppError::bad_request("missing_file", "Изображение не передано"))?;
+    if bytes.len() > 10 * 1024 * 1024 {
+        return Err(AppError::bad_request("bad_photo_size", "Файл больше 10 МБ"));
+    }
     let ext = crate::domain::sniff_image_ext(&bytes).ok_or_else(|| {
         AppError::bad_request("bad_photo_type", "Изображение должно быть jpeg, png, heic или webp")
     })?;
-    if bytes.len() > 10 * 1024 * 1024 {
-        return Err(AppError::bad_request("bad_photo_size", "Файл больше 10 МБ"));
+
+    // check the reward first so a 404 leaves no orphaned file on disk
+    let mut tx = state.pool.begin().await?;
+    let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM rewards WHERE id = $1 FOR UPDATE")
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::not_found("Награда не найдена"));
     }
 
     let rel = format!("{}.{}", Uuid::new_v4(), ext);
     let dir = state.config.photo_dir.join("rewards");
     tokio::fs::create_dir_all(&dir).await?;
-    tokio::fs::write(dir.join(&rel), &bytes).await?;
+    let abs = dir.join(&rel);
+    tokio::fs::write(&abs, &bytes).await?;
 
-    let mut tx = state.pool.begin().await?;
-    let r = sqlx::query_as::<_, Reward>(
-        "UPDATE rewards SET image_path = $1 WHERE id = $2 RETURNING *",
-    )
-    .bind(&rel)
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .ok_or_else(|| AppError::not_found("Награда не найдена"))?;
-    state
-        .audit(
-            &mut *tx,
-            AuditRecord::new("reward_image")
-                .actor(auth.user.id, "admin")
-                .entity("reward", r.id),
+    let result: AppResult<Reward> = async {
+        let r = sqlx::query_as::<_, Reward>(
+            "UPDATE rewards SET image_path = $1 WHERE id = $2 RETURNING *",
         )
+        .bind(&rel)
+        .bind(id)
+        .fetch_one(&mut *tx)
         .await?;
-    tx.commit().await?;
+        state
+            .audit(
+                &mut *tx,
+                AuditRecord::new("reward_image")
+                    .actor(auth.user.id, "admin")
+                    .entity("reward", r.id),
+            )
+            .await?;
+        Ok(r)
+    }
+    .await;
+    let r = match result {
+        Ok(r) => r,
+        Err(e) => {
+            drop(tx);
+            let _ = tokio::fs::remove_file(&abs).await;
+            return Err(e);
+        }
+    };
+    if let Err(e) = tx.commit().await {
+        let _ = tokio::fs::remove_file(&abs).await;
+        return Err(e.into());
+    }
     Ok(Json(super::rewards::reward_dto(r)))
 }
 
@@ -1162,6 +1300,10 @@ async fn generate_summary(
 ) -> AppResult<Json<SummaryDto>> {
     if !(1..=12).contains(&req.month) {
         return Err(AppError::bad_request("invalid_month", "Месяц должен быть 1-12"));
+    }
+    // month_range_utc panics on dates chrono cannot represent
+    if !(2000..=2100).contains(&req.year) {
+        return Err(AppError::bad_request("invalid_year", "Год должен быть 2000-2100"));
     }
     let id = summaries::generate(&state, req.year, req.month, Some(auth.user.id)).await?;
     let s = sqlx::query_as::<_, MonthlySummary>("SELECT * FROM monthly_summaries WHERE id = $1")

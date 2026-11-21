@@ -4,15 +4,17 @@ import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { api, ApiError } from '@/api/client';
+import { api, ApiError, errorText } from '@/api/client';
+import type { ActiveSessionResponse } from '@/api/types/ActiveSessionResponse';
 import type { SessionDto } from '@/api/types/SessionDto';
-import { Scanner } from '@/components/Scanner';
 import { Button, Card, ErrorText } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles } from '@/theme';
 
-type Step = 'photo' | 'scan' | 'sending' | 'done';
+type Step = 'photo' | 'sending' | 'done';
 
+// the session is already bound to its komendant: finishing needs only the photo
 export default function FinishScreen() {
+  const styles = useStyles();
   const qc = useQueryClient();
   const cam = useRef<CameraView>(null);
   const [perm, requestPerm] = useCameraPermissions();
@@ -30,37 +32,50 @@ export default function FinishScreen() {
       ctx.resize({ width: 1600 });
       const out = await ctx.renderAsync();
       const res = await out.saveAsync({ compress: 0.7, format: SaveFormat.JPEG });
-      setPhoto({ uri: res.uri });
+      // React Native uploads only file:// or content:// URIs; a bare path fails as "network error"
+      const uri = /^(file|content):\/\//.test(res.uri) ? res.uri : `file://${res.uri}`;
+      setPhoto({ uri });
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Не удалось сделать фото');
     }
   };
 
-  const submit = async (qr: string) => {
+  const finished = (s: SessionDto) => {
+    void qc.invalidateQueries({ queryKey: ['active-session'] });
+    void qc.invalidateQueries({ queryKey: ['me'] });
+    if (s.status === 'expired') {
+      Alert.alert('Не засчитано', 'Отработка длилась больше лимита и не засчитана', [
+        { text: 'OK', onPress: () => router.back() },
+      ]);
+    } else {
+      setDone(s);
+      setStep('done');
+    }
+  };
+
+  const submit = async () => {
     if (!photo) return;
     setStep('sending');
     setErr(null);
     try {
       const fd = new FormData();
-      fd.append('qr', qr);
       fd.append('photo', {
         uri: photo.uri,
         name: 'photo.jpg',
         type: 'image/jpeg',
       } as unknown as Blob);
-      const s = await api.post<SessionDto>('/api/student/sessions/finish', fd);
-      void qc.invalidateQueries({ queryKey: ['active-session'] });
-      void qc.invalidateQueries({ queryKey: ['me'] });
-      if (s.status === 'expired') {
-        Alert.alert('Не засчитано', 'Отработка длилась больше лимита и не засчитана', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
-      } else {
-        setDone(s);
-        setStep('done');
-      }
+      finished(await api.post<SessionDto>('/api/student/sessions/finish', fd));
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Ошибка отправки');
+      // the upload may have reached the server even though the answer was lost
+      if (e instanceof ApiError && (e.status === 0 || e.code === 'no_active_session')) {
+        try {
+          const a = await api.get<ActiveSessionResponse>('/api/student/sessions/active');
+          if (a.session?.status === 'pending_confirmation') return finished(a.session);
+        } catch {
+          // still offline: show the original error
+        }
+      }
+      setErr(errorText(e, 'Ошибка отправки'));
       setStep('photo');
     }
   };
@@ -105,8 +120,8 @@ export default function FinishScreen() {
               <View style={styles.bottomRow}>
                 <Button title="Переснять" outline onPress={() => setPhoto(null)} style={{ flex: 1 }} />
                 <Button
-                  title="Далее — сканировать QR"
-                  onPress={() => setStep('scan')}
+                  title="Отправить"
+                  onPress={() => void submit()}
                   style={{ flex: 1.4, marginLeft: 8 }}
                 />
               </View>
@@ -120,17 +135,17 @@ export default function FinishScreen() {
           <Text style={{ color: '#fff', marginTop: 12 }}>Отправка…</Text>
         </View>
       )}
-      <ErrorText>{err}</ErrorText>
-      <Scanner
-        visible={step === 'scan'}
-        onClose={() => setStep('photo')}
-        onScan={(qr) => void submit(qr)}
-      />
+      {!!err && (
+        <View style={styles.errBox}>
+          <ErrorText>{err}</ErrorText>
+        </View>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: '#000' },
   center: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: colors.bg },
   bottom: { position: 'absolute', bottom: 40, left: 24, right: 24 },
@@ -147,6 +162,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#000',
   },
+  errBox: { backgroundColor: colors.card, padding: 12 },
   title: { fontSize: 20, fontWeight: '700', color: colors.text, textAlign: 'center' },
   sub: { fontSize: 14, color: colors.muted, textAlign: 'center', marginTop: 8 },
-});
+}));

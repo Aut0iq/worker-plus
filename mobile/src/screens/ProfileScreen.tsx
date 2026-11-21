@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, FlatList, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { api, ApiError } from '../api/client';
@@ -9,10 +9,19 @@ import { useAuth } from '../auth';
 import { fmtMinutes, fmtTs } from '../format';
 import { roleLabels } from '../labels';
 import { Button, Card, Empty, ErrorText, Field } from '../components/ui';
-import { colors } from '../theme';
+import { makeStyles, useColors, useThemeMode, type ThemeMode } from '../theme';
+
+const THEME_OPTIONS: { mode: ThemeMode; label: string }[] = [
+  { mode: 'system', label: 'Как в системе' },
+  { mode: 'light', label: 'Светлая' },
+  { mode: 'dark', label: 'Тёмная' },
+];
 
 export function ProfileScreen() {
-  const { user, config, logout } = useAuth();
+  const { user, config, logout, updateToken } = useAuth();
+  const colors = useColors();
+  const styles = useStyles();
+  const { mode, setMode } = useThemeMode();
   const tz = config?.timezone ?? 'UTC';
   const [oldPwd, setOldPwd] = useState('');
   const [newPwd, setNewPwd] = useState('');
@@ -27,8 +36,10 @@ export function ProfileScreen() {
 
   const changePwd = useMutation({
     mutationFn: () =>
-      api.post('/api/me/password', { old_password: oldPwd, new_password: newPwd }),
-    onSuccess: () => {
+      api.post<{ token?: string }>('/api/me/password', { old_password: oldPwd, new_password: newPwd }),
+    onSuccess: async (r) => {
+      // old tokens are revoked by the server; keep this device logged in
+      if (r?.token) await updateToken(r.token);
       setOldPwd('');
       setNewPwd('');
       setNewPwd2('');
@@ -83,7 +94,7 @@ export function ProfileScreen() {
             renderItem={({ item }) => (
               <View style={styles.assign}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.assignReason}>{item.reason}</Text>
+                  <Text style={styles.assignReason}>{item.reason || 'Назначено'}</Text>
                   <Text style={styles.sub}>
                     {item.assigned_by_name ?? '—'} · {fmtTs(item.created_at, tz)}
                   </Text>
@@ -94,6 +105,21 @@ export function ProfileScreen() {
           />
         </Card>
       )}
+
+      <Card>
+        <Text style={styles.section}>Тема оформления</Text>
+        <View style={styles.segment}>
+          {THEME_OPTIONS.map((o) => (
+            <Pressable
+              key={o.mode}
+              onPress={() => setMode(o.mode)}
+              style={[styles.segItem, mode === o.mode && { backgroundColor: colors.primary }]}
+            >
+              <Text style={[styles.segText, mode === o.mode && { color: '#fff' }]}>{o.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </Card>
 
       <Card>
         <Text style={styles.section}>Сменить пароль</Text>
@@ -134,7 +160,8 @@ export function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   name: { fontSize: 20, fontWeight: '700', color: colors.text },
   sub: { fontSize: 13, color: colors.muted, marginTop: 2 },
@@ -150,5 +177,14 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
   },
   assignReason: { fontSize: 14, color: colors.text },
+  segment: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  segItem: { flex: 1, paddingVertical: 10, alignItems: 'center' },
+  segText: { fontSize: 13, color: colors.text },
   assignMin: { fontSize: 15, fontWeight: '600', color: colors.primary, marginLeft: 8 },
-});
+}));

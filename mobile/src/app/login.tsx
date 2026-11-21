@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { ApiError, getBaseUrl, saveServerUrl, setBaseUrl } from '@/api/client';
+import { ApiError, errorText, getBaseUrl, saveServerUrl, setBaseUrl } from '@/api/client';
 import { useAuth } from '@/auth';
 import { Button, ErrorText, Field } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles } from '@/theme';
 
 export default function LoginScreen() {
+  const styles = useStyles();
   const { login } = useAuth();
   const [loginName, setLoginName] = useState('');
   const [password, setPassword] = useState('');
@@ -22,7 +23,7 @@ export default function LoginScreen() {
       await login(loginName.trim(), password);
       router.replace('/');
     } catch (e) {
-      setErr(e instanceof ApiError ? e.message : 'Ошибка входа');
+      setErr(e instanceof ApiError && e.status === 401 ? e.message : errorText(e, 'Ошибка входа'));
     } finally {
       setBusy(false);
     }
@@ -41,7 +42,7 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.box}>
-        <Text style={styles.title}>Prila</Text>
+        <Text style={styles.title}>Work+</Text>
         <Text style={styles.sub}>Учёт часов отработок</Text>
         <Field
           label="Логин"
@@ -81,7 +82,8 @@ export default function LoginScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg, justifyContent: 'center' },
   box: { marginHorizontal: 24, backgroundColor: colors.card, borderRadius: 16, padding: 20 },
   title: { fontSize: 30, fontWeight: '800', color: colors.primary, textAlign: 'center' },
@@ -93,4 +95,4 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textDecorationLine: 'underline',
   },
-});
+}));

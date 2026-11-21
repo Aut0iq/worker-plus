@@ -77,7 +77,10 @@ function Rewards() {
     Modal.confirm({
       title: `Удалить «${r.title}»?`,
       onOk: () =>
-        api.del(`/api/admin/rewards/${r.id}`).then(() => qc.invalidateQueries({ queryKey: ['rewards'] })),
+        api
+          .del(`/api/admin/rewards/${r.id}`)
+          .then(() => qc.invalidateQueries({ queryKey: ['rewards'] }))
+          .catch((e) => msg.error((e as Error).message)),
     });
 
   const uploadImage = async (r: RewardDto, file: File) => {

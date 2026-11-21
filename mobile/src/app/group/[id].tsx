@@ -5,11 +5,14 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/api/client';
 import type { UserDto } from '@/api/types/UserDto';
 import { fmtMinutes } from '@/format';
+import { Icon } from '@/components/Icon';
 import { Empty, Field } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
 export default function GroupStudents() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const colors = useColors();
+  const styles = useStyles();
   const [filter, setFilter] = useState('');
   const q = useQuery({
     queryKey: ['group-students', id],
@@ -39,7 +42,7 @@ export default function GroupStudents() {
                 <Text style={{ color: colors.success }}>{fmtMinutes(u.balance_minutes)}</Text>
               </Text>
             </View>
-            <Text style={styles.arrow}>›</Text>
+            <Icon name="chevron" color={colors.muted} />
           </TouchableOpacity>
         )}
       />
@@ -47,7 +50,8 @@ export default function GroupStudents() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -60,5 +64,4 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 15, fontWeight: '600', color: colors.text },
   sub: { fontSize: 12, color: colors.muted, marginTop: 2 },
-  arrow: { fontSize: 22, color: colors.muted, marginLeft: 8 },
-});
+}));

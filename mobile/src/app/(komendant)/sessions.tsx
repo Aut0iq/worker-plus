@@ -10,8 +10,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError } from '@/api/client';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, errorText } from '@/api/client';
 import type { Paginated } from '@/api/types/Paginated';
 import type { SessionDto } from '@/api/types/SessionDto';
 import { useAuth } from '@/auth';
@@ -19,18 +19,42 @@ import { fmtClock, fmtMinutes, fmtTs } from '@/format';
 import { difficultyLabels } from '@/labels';
 import { AuthImage } from '@/components/AuthImage';
 import { Button, Card, Empty, ErrorText } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles, useColors } from '@/theme';
 
+// paged: with only the first 50 shown, older pending sessions could never be confirmed
 function useSessions(status: string) {
-  return useQuery({
+  const q = useInfiniteQuery({
     queryKey: ['kom-sessions', status],
-    queryFn: () =>
-      api.get<Paginated<SessionDto>>(`/api/komendant/sessions?status=${status}&per_page=50`),
+    queryFn: ({ pageParam }) =>
+      api.get<Paginated<SessionDto>>(
+        `/api/komendant/sessions?status=${status}&page=${pageParam}&per_page=50`,
+      ),
+    initialPageParam: 1,
+    getNextPageParam: (last) =>
+      last.page * last.per_page < last.total ? last.page + 1 : undefined,
     refetchInterval: 15_000,
   });
+  const items = q.data?.pages.flatMap((p) => p.items) ?? [];
+  const total = q.data?.pages[0]?.total ?? 0;
+  return { ...q, items, total };
+}
+
+function More({ q }: { q: ReturnType<typeof useSessions> }) {
+  if (!q.hasNextPage) return null;
+  return (
+    <Button
+      title={`Показать ещё (показано ${q.items.length} из ${q.total})`}
+      outline
+      loading={q.isFetchingNextPage}
+      onPress={() => void q.fetchNextPage()}
+      style={{ marginBottom: 12 }}
+    />
+  );
 }
 
 export default function KomendantSessions() {
+  const colors = useColors();
+  const styles = useStyles();
   const { config } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const qc = useQueryClient();
@@ -44,7 +68,7 @@ export default function KomendantSessions() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['kom-sessions'] });
   };
-  const onErr = (e: unknown) => setErr(e instanceof ApiError ? e.message : 'Ошибка');
+  const onErr = (e: unknown) => setErr(errorText(e));
 
   const confirm = useMutation({
     mutationFn: (id: string) => api.post(`/api/komendant/sessions/${id}/confirm`),
@@ -62,8 +86,8 @@ export default function KomendantSessions() {
     onError: onErr,
   });
 
-  const pItems = pending.data?.items ?? [];
-  const aItems = active.data?.items ?? [];
+  const pItems = pending.items;
+  const aItems = active.items;
 
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = async () => {
@@ -79,7 +103,9 @@ export default function KomendantSessions() {
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
     >
       <ErrorText>{err}</ErrorText>
-      <Text style={styles.section}>Ждут подтверждения</Text>
+      <Text style={styles.section}>
+        Ждут подтверждения{pending.total ? ` (${pending.total})` : ''}
+      </Text>
       {pItems.length === 0 && <Empty text="Никого нет" />}
       {pItems.map((s) => (
         <Card key={s.id}>
@@ -132,7 +158,11 @@ export default function KomendantSessions() {
         </Card>
       ))}
 
-      <Text style={styles.section}>Сейчас работают</Text>
+      <More q={pending} />
+
+      <Text style={styles.section}>
+        Сейчас работают{active.total ? ` (${active.total})` : ''}
+      </Text>
       {aItems.length === 0 && <Empty text="Никто не работает" />}
       {aItems.map((s) => (
         <Card key={s.id}>
@@ -142,6 +172,8 @@ export default function KomendantSessions() {
           </Text>
         </Card>
       ))}
+
+      <More q={active} />
 
       <Modal visible={!!photoId} onRequestClose={() => setPhotoId(null)}>
         <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -186,7 +218,8 @@ export default function KomendantSessions() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: { flex: 1, backgroundColor: colors.bg },
   section: { fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 10, marginTop: 6 },
   title: { fontSize: 15, fontWeight: '600', color: colors.text },
@@ -210,4 +243,4 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     color: colors.text,
   },
-});
+}));

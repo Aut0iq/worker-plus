@@ -30,10 +30,14 @@ impl Config {
             .parse()
             .map_err(|_| "invalid APP_TIMEZONE".to_string())?;
         let static_dir = std::env::var("STATIC_DIR").ok().map(PathBuf::from);
+        let jwt_secret = get("JWT_SECRET")?;
+        let qr_secret = get("QR_SECRET")?;
+        check_secret("JWT_SECRET", &jwt_secret)?;
+        check_secret("QR_SECRET", &qr_secret)?;
         Ok(Config {
             database_url: get("DATABASE_URL")?,
-            jwt_secret: get("JWT_SECRET")?,
-            qr_secret: get("QR_SECRET")?,
+            jwt_secret,
+            qr_secret,
             timezone,
             photo_dir: PathBuf::from(opt("PHOTO_DIR", "./data/photos")),
             log_dir: PathBuf::from(opt("LOG_DIR", "./data/logs")),
@@ -51,5 +55,35 @@ impl Config {
                 .parse()
                 .map_err(|_| "invalid MAX_SESSION_HOURS".to_string())?,
         })
+    }
+}
+
+/// Anyone who knows JWT_SECRET/QR_SECRET can forge logins and QR codes, so the
+/// placeholder values from .env.example and very short secrets are refused.
+fn check_secret(name: &str, value: &str) -> Result<(), String> {
+    let v = value.trim();
+    if v.to_lowercase().contains("change-me") {
+        return Err(format!("{name} still has the placeholder value from .env.example"));
+    }
+    if v.chars().count() < 16 {
+        return Err(format!(
+            "{name} is too short (need 16+ chars, 32+ recommended; e.g. `openssl rand -hex 32`)"
+        ));
+    }
+    if v.chars().count() < 32 {
+        eprintln!("warning: {name} is shorter than 32 characters");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_secret;
+
+    #[test]
+    fn secrets_are_checked() {
+        assert!(check_secret("X", "change-me-long-random-string").is_err());
+        assert!(check_secret("X", "short").is_err());
+        assert!(check_secret("X", "0123456789abcdef0123456789abcdef").is_ok());
     }
 }

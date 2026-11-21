@@ -8,10 +8,11 @@ import { api } from '@/api/client';
 import type { QrOpenResponse } from '@/api/types/QrOpenResponse';
 import { difficultyLabels } from '@/labels';
 import { Button } from '@/components/ui';
-import { colors } from '@/theme';
+import { makeStyles } from '@/theme';
 
 export default function QrScreen() {
   useKeepAwake();
+  const styles = useStyles();
   const { difficulty } = useLocalSearchParams<{ difficulty: string }>();
   const d = difficulty === 'hard' ? 'hard' : 'light';
   const { width } = useWindowDimensions();
@@ -51,7 +52,8 @@ export default function QrScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = makeStyles((colors) =>
+  StyleSheet.create({
   wrap: {
     flex: 1,
     backgroundColor: colors.card,
@@ -71,4 +73,4 @@ const styles = StyleSheet.create({
   },
   sub: { fontSize: 13, color: colors.muted, textAlign: 'center', marginTop: 20 },
   close: { marginTop: 24, alignSelf: 'stretch' },
-});
+}));

@@ -98,7 +98,12 @@ impl AppState {
             pool,
             config,
             clock,
-            http: reqwest::Client::new(),
+            // a hanging push endpoint must not keep spawned tasks alive forever
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .connect_timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             login_attempts: Arc::new(Mutex::new(HashMap::new())),
             audit_file: Arc::new(Mutex::new(audit_file)),
             komendant_file: Arc::new(Mutex::new(komendant_file)),
@@ -294,6 +299,10 @@ struct ExpoMessage<'a> {
     title: &'a str,
     body: &'a str,
     data: &'a Value,
+    sound: &'static str,
+    priority: &'static str,
+    #[serde(rename = "channelId")]
+    channel_id: &'static str,
 }
 
 async fn send_push(
@@ -318,25 +327,78 @@ async fn send_push(
     if tokens.is_empty() {
         return Ok(());
     }
-    let msgs: Vec<ExpoMessage> = tokens
-        .iter()
-        .map(|t| ExpoMessage {
-            to: t,
-            title: &title,
-            body: &body,
-            data: &data,
-        })
-        .collect();
-    let resp = http
-        .post(url)
-        .json(&msgs)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
+    // Expo accepts at most 100 messages per request
+    for chunk in tokens.chunks(100) {
+        let msgs: Vec<ExpoMessage> = chunk
+            .iter()
+            .map(|t| ExpoMessage {
+                to: t,
+                title: &title,
+                body: &body,
+                data: &data,
+                sound: "default",
+                priority: "high",
+                channel_id: "default",
+            })
+            .collect();
+        let resp = http
+            .post(url)
+            .json(&msgs)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(format!("push status {status}: {text}"));
+        if !status.is_success() {
+            return Err(format!("push status {status}: {text}"));
+        }
+        let dead = dead_tokens(chunk, &text);
+        if !dead.is_empty() {
+            tracing::info!(count = dead.len(), "removing unregistered push tokens");
+            sqlx::query("DELETE FROM push_tokens WHERE token = ANY($1)")
+                .bind(&dead)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
     Ok(())
+}
+
+/// Expo push tickets come back in request order; `DeviceNotRegistered` means the
+/// app was uninstalled or the token rotated — such tokens are useless forever.
+pub fn dead_tokens(tokens: &[String], response: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<Value>(response) else {
+        return Vec::new();
+    };
+    let Some(tickets) = v.get("data").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    tickets
+        .iter()
+        .zip(tokens)
+        .filter(|(t, _)| {
+            t.get("status").and_then(Value::as_str) == Some("error")
+                && t.pointer("/details/error").and_then(Value::as_str)
+                    == Some("DeviceNotRegistered")
+        })
+        .map(|(_, tok)| tok.clone())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::dead_tokens;
+
+    #[test]
+    fn dead_tokens_from_expo_tickets() {
+        let tokens = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let resp = r#"{"data":[
+            {"status":"ok","id":"1"},
+            {"status":"error","message":"x","details":{"error":"DeviceNotRegistered"}},
+            {"status":"error","message":"y","details":{"error":"MessageRateExceeded"}}
+        ]}"#;
+        assert_eq!(dead_tokens(&tokens, resp), vec!["b".to_string()]);
+        assert!(dead_tokens(&tokens, "not json").is_empty());
+    }
 }
