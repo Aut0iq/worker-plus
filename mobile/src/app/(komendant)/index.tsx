@@ -10,7 +10,7 @@ export default function KomendantHome() {
     <View style={styles.wrap}>
       <Card>
         <Text style={styles.title}>Открыть QR для ОПТ</Text>
-        <Text style={styles.sub}>Студент сканирует этот код, чтобы начать общественно полезный труд. Для завершения QR не нужен — только фото.</Text>
+        <Text style={styles.sub}>Студент сканирует этот код, чтобы начать общественно полезный труд.</Text>
         <Button
           title="Лёгкие работы ×1"
           onPress={() => router.push('/qr?difficulty=light')}
@@ -21,6 +21,13 @@ export default function KomendantHome() {
           onPress={() => router.push('/qr?difficulty=hard')}
           style={{ marginTop: 12, backgroundColor: colors.warning }}
         />
+      </Card>
+      <Card>
+        <Text style={styles.title}>QR для завершения ОПТ</Text>
+        <Text style={styles.sub}>
+          Студент сканирует его в конце работы, затем фотографирует результат. Код меняется раз в 3 минуты.
+        </Text>
+        <Button title="Открыть QR завершения" onPress={() => router.push('/qr?kind=finish')} style={{ marginTop: 16 }} />
       </Card>
     </View>
   );

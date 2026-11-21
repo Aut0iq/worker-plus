@@ -7,7 +7,7 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { api, ApiError, errorText } from '@/api/client';
 import type { ActiveSessionResponse } from '@/api/types/ActiveSessionResponse';
 import type { SessionDto } from '@/api/types/SessionDto';
-import { WEB_NO_CAMERA } from '@/components/Scanner';
+import { Scanner, WEB_NO_CAMERA } from '@/components/Scanner';
 import { Button, Card, ErrorText } from '@/components/ui';
 import { makeStyles } from '@/theme';
 
@@ -29,13 +29,18 @@ function WebNoCamera() {
   );
 }
 
-// the session is already bound to its komendant: finishing needs only the photo
+// a server answer that means "scan the komendant's finish QR again" (the photo is kept)
+const QR_ERRORS = ['missing_qr', 'invalid_qr', 'expired_qr', 'wrong_qr_kind'];
+
+// finishing = the komendant's finish QR (changes every 3 min) + a photo of the work
 function NativeFinish() {
   const styles = useStyles();
   const qc = useQueryClient();
   const cam = useRef<CameraView>(null);
   const [perm, requestPerm] = useCameraPermissions();
   const [step, setStep] = useState<Step>('photo');
+  const [qr, setQr] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(true);
   const [photo, setPhoto] = useState<{ uri: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<SessionDto | null>(null);
@@ -71,11 +76,12 @@ function NativeFinish() {
   };
 
   const submit = async () => {
-    if (!photo) return;
+    if (!photo || !qr) return;
     setStep('sending');
     setErr(null);
     try {
       const fd = new FormData();
+      fd.append('qr', qr);
       fd.append('photo', {
         uri: photo.uri,
         name: 'photo.jpg',
@@ -93,6 +99,7 @@ function NativeFinish() {
         }
       }
       setErr(errorText(e, 'Ошибка отправки'));
+      if (e instanceof ApiError && QR_ERRORS.includes(e.code)) setQr(null);
       setStep('photo');
     }
   };
@@ -111,7 +118,23 @@ function NativeFinish() {
 
   return (
     <View style={styles.wrap}>
-      {step === 'photo' && (
+      <Scanner
+        visible={scanning}
+        onClose={() => setScanning(false)}
+        onScan={(data) => {
+          setQr(data);
+          setErr(null);
+          setScanning(false);
+        }}
+      />
+      {step === 'photo' && !qr && (
+        <View style={styles.center}>
+          <Text style={styles.title}>Шаг 1 из 2</Text>
+          <Text style={styles.sub}>Отсканируйте QR завершения у коменданта.</Text>
+          <Button title="Сканировать QR" onPress={() => setScanning(true)} style={{ marginTop: 16 }} />
+        </View>
+      )}
+      {step === 'photo' && !!qr && (
         <>
           {!photo ? (
             perm?.granted ? (

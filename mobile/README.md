@@ -20,7 +20,8 @@ npx expo start        # затем отсканировать QR в Expo Go (And
 `npx expo export -p web` собирает SPA с базовым путём `/app` (`app.json`:
 `web.output: "single"`, `experiments.baseUrl`). В Docker-образе её раздаёт сервер
 по `/app`. Камера в браузере работает только по HTTPS, поэтому на вебе сканер QR и
-фото работы заменены сообщением (`WEB_NO_CAMERA`); подтверждения — через
+фото работы заменены сообщением (`WEB_NO_CAMERA`); завершение ОПТ в приложении —
+скан QR завершения коменданта (`qr.tsx?kind=finish`), затем фото (`finish.tsx`); подтверждения — через
 `window.confirm` (`src/alert.ts`), хранилище — `src/storage.ts`.
 
 ## Android APK и push

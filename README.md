@@ -15,12 +15,13 @@
 
 ## Роли
 
-- **student** — студент: видит долг/баланс, начинает отработку по QR коменданта,
-  завершает фотографией работы, покупает награды за минуты баланса.
+- **student** — студент: видит задание/баланс, начинает ОПТ по QR начала коменданта,
+  завершает по QR завершения (любого коменданта) + фото работы, покупает награды
+  за минуты баланса.
 - **teacher** — преподаватель: назначает часы (целые часы, ≤ 100 за раз) студентам
   по группам, видит должников; получает уведомление, когда студент отработал часы.
-- **komendant** — комендант: показывает QR для старта отработки,
-  подтверждает/отклоняет сессии.
+- **komendant** — комендант: показывает QR начала (меняется каждые 30 с) и QR
+  завершения (каждые 3 мин), подтверждает/отклоняет ОПТ.
 - **admin** — администратор: веб-панель, пользователи, группы, награды, заказы,
   проверка фото, решение по сессиям вместо коменданта, месячные сводки, логи.
   Может всё, что преподаватель, и **только он** списывает часы (корректировка
@@ -108,7 +109,9 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 `credited = rounded * coefficient`; при подтверждении `to_debt = min(debt, credited)`,
 остаток — в баланс; при отклонении фото зачёт откатывается (что не удалось
 забрать с баланса — возвращается в долг). QR: `prila1.<komendant>.<difficulty>.<window>.<hmac16>`,
-окно 30 с, валиден текущее и предыдущее окно.
+окно 30 с, валиден текущее и предыдущее окно. QR завершения: `prila1f.<komendant>.<window>.<hmac16>`,
+окно 180 с (текущее + предыдущее, 3–6 мин); QR начала и завершения не взаимозаменяемы
+(`wrong_qr_kind`).
 
 ## API (сводно)
 
@@ -127,8 +130,9 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 
 ### Студент
 - `POST /api/student/sessions/start` `{qr}`
-- `POST /api/student/sessions/finish` (multipart: `photo` jpeg/png/heic/webp ≤10МБ;
-  `qr` необязателен — если передан, должен быть того же коменданта)
+- `POST /api/student/sessions/finish` (multipart: `qr` — QR завершения любого активного
+  коменданта, обязателен (`missing_qr`); `photo` jpeg/png/heic/webp ≤10МБ). ОПТ остаётся
+  за комендантом, который его начинал
 - `GET /api/student/sessions` · `GET /api/student/sessions/active` (с `server_now`)
 - `GET /api/student/assignments` · `GET /api/student/orders` · `GET /api/student/orders/{id}`
 - `GET /api/rewards` · `POST /api/rewards/{id}/buy` · `GET /api/rewards/{id}/image`
@@ -136,6 +140,8 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 ### Комендант
 - `POST /api/komendant/qr/open` `{difficulty: light|hard}` → `{qr,expires_at}` (логируется)
 - `GET /api/komendant/qr?difficulty=` — обновление QR (не логируется)
+- `POST /api/komendant/qr/finish/open` → `{qr,expires_at}` (логируется) ·
+  `GET /api/komendant/qr/finish` — QR завершения
 - `GET /api/komendant/sessions?status=`
 - `POST /api/komendant/sessions/{id}/confirm` · `POST /api/komendant/sessions/{id}/reject {reason}`
 - `GET /api/komendant/sessions/{id}/photo` (также доступна студенту-владельцу и админу)

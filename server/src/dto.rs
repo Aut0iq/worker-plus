@@ -104,6 +104,14 @@ pub struct QrOpenResponse {
     pub difficulty: Difficulty,
 }
 
+#[derive(Serialize, TS)]
+#[ts(export, export_to = "../shared/api-types/")]
+pub struct FinishQrResponse {
+    pub qr: String,
+    #[ts(type = "string")]
+    pub expires_at: DateTime<Utc>,
+}
+
 #[derive(Deserialize, TS)]
 #[ts(export, export_to = "../shared/api-types/")]
 pub struct SessionStartRequest {

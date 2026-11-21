@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::auth::{AuthUser, KomendantUser};
 use crate::domain;
-use crate::dto::{PageQuery, Paginated, QrOpenRequest, QrOpenResponse, RejectSessionRequest, SessionDto};
+use crate::dto::{
+    FinishQrResponse, PageQuery, Paginated, QrOpenRequest, QrOpenResponse, RejectSessionRequest, SessionDto,
+};
 use crate::error::{AppError, AppResult};
 use crate::models::{Difficulty, Role, SessionStatus, User, WorkSession};
 use crate::qr;
@@ -20,6 +22,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/komendant/qr/open", post(qr_open))
         .route("/komendant/qr", get(qr_refresh))
+        .route("/komendant/qr/finish/open", post(finish_qr_open))
+        .route("/komendant/qr/finish", get(finish_qr_refresh))
         .route("/komendant/sessions", get(list_sessions))
         .route("/komendant/sessions/{id}/confirm", post(confirm_session))
         .route("/komendant/sessions/{id}/reject", post(reject_session))
@@ -89,6 +93,37 @@ async fn qr_refresh(
         AppError::bad_request("missing_difficulty", "Не указана сложность (light или hard)")
     })?;
     issue_qr(&state, &auth, difficulty, false).await.map(Json)
+}
+
+fn finish_qr(state: &AppState, auth: &KomendantUser) -> FinishQrResponse {
+    let issued = qr::issue_finish(&state.config.qr_secret, auth.user.id, state.clock.now());
+    FinishQrResponse {
+        qr: issued.qr,
+        expires_at: issued.expires_at,
+    }
+}
+
+/// Opening the finish QR is logged like the start QR; refreshing it is not.
+async fn finish_qr_open(
+    State(state): State<AppState>,
+    auth: KomendantUser,
+) -> AppResult<Json<FinishQrResponse>> {
+    let mut tx = state.pool.begin().await?;
+    state
+        .audit(
+            &mut *tx,
+            AuditRecord::new("finish_qr_open").actor(auth.user.id, "komendant"),
+        )
+        .await?;
+    state
+        .komendant_log(&mut *tx, auth.user.id, "finish_qr_open", None, None, None)
+        .await?;
+    tx.commit().await?;
+    Ok(Json(finish_qr(&state, &auth)))
+}
+
+async fn finish_qr_refresh(State(state): State<AppState>, auth: KomendantUser) -> Json<FinishQrResponse> {
+    Json(finish_qr(&state, &auth))
 }
 
 #[derive(Deserialize)]

@@ -45,6 +45,7 @@ export const auditActionLabels: Record<string, string> = {
   password_reset: 'Сброс пароля',
   photo_review: 'Проверка фото',
   qr_open: 'QR открыт',
+  finish_qr_open: 'QR завершения открыт',
   reward_create: 'Товар создан',
   reward_update: 'Товар изменён',
   reward_delete: 'Товар удалён',
@@ -65,6 +66,7 @@ export const auditActionLabels: Record<string, string> = {
 export const komendantActionLabels: Record<string, string> = {
   login: 'Вход',
   qr_open: 'QR открыт',
+  finish_qr_open: 'QR завершения открыт',
   photo_view: 'Просмотр фото',
   session_started: 'ОПТ начат',
   session_finished: 'ОПТ завершён',

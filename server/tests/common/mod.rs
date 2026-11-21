@@ -209,6 +209,12 @@ pub async fn open_qr(app: &Router, komendant_token: &str, difficulty: &str) -> S
     v["qr"].as_str().unwrap().to_string()
 }
 
+pub async fn open_finish_qr(app: &Router, komendant_token: &str) -> String {
+    let (status, v) = call(app, "POST", "/api/komendant/qr/finish/open", Some(komendant_token), None).await;
+    assert_eq!(status, StatusCode::OK, "finish qr open failed: {v}");
+    v["qr"].as_str().unwrap().to_string()
+}
+
 pub async fn start_session(app: &Router, student_token: &str, qr: &str) -> Value {
     let (status, v) = call(
         app,

@@ -54,7 +54,7 @@ async fn full_flow_start_finish_confirm_partial_debt(pool: PgPool) {
 
     // 1h43m31s later -> rounded 104, credited 208
     app.clock.advance_seconds(3600 + 43 * 60 + 31);
-    let qr2 = open_qr(&app.app, &tok_kom, "light").await; // difficulty ignored at finish
+    let qr2 = open_finish_qr(&app.app, &tok_kom).await;
     let (s, v) = finish_session(&app.app, &tok_student, &qr2).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["status"], "pending_confirmation");
@@ -110,7 +110,7 @@ async fn finish_after_max_hours_expires_and_notifies(pool: PgPool) {
     start_session(&app.app, &tok_student, &qr).await;
 
     app.clock.advance_seconds(4 * 3600 + 5);
-    let qr2 = open_qr(&app.app, &tok_kom, "light").await;
+    let qr2 = open_finish_qr(&app.app, &tok_kom).await;
     let (s, v) = finish_session(&app.app, &tok_student, &qr2).await;
     assert_eq!(s, StatusCode::OK, "{v}");
     assert_eq!(v["status"], "expired");
@@ -180,7 +180,7 @@ async fn komendant_reject_session(pool: PgPool) {
     let qr = open_qr(&app.app, &tok_kom, "light").await;
     let _s = start_session(&app.app, &tok_student, &qr).await;
     app.clock.advance_seconds(3600);
-    let qr2 = open_qr(&app.app, &tok_kom, "light").await;
+    let qr2 = open_finish_qr(&app.app, &tok_kom).await;
     let (_s, v) = finish_session(&app.app, &tok_student, &qr2).await;
     let sid = v["id"].as_str().unwrap();
 
@@ -209,7 +209,7 @@ async fn photo_review_reject_reverts(pool: PgPool) {
     let qr = open_qr(&app.app, &tok_kom, "light").await;
     start_session(&app.app, &tok_student, &qr).await;
     app.clock.advance_seconds(2 * 3600); // 120 min -> credited 120
-    let qr2 = open_qr(&app.app, &tok_kom, "light").await;
+    let qr2 = open_finish_qr(&app.app, &tok_kom).await;
     let (_s, v) = finish_session(&app.app, &tok_student, &qr2).await;
     let sid = v["id"].as_str().unwrap();
     call(
@@ -361,7 +361,7 @@ async fn audit_and_komendant_logs_written(pool: PgPool) {
     let qr = open_qr(&app.app, &tok_kom, "light").await;
     start_session(&app.app, &tok_student, &qr).await;
     app.clock.advance_seconds(3600);
-    let qr2 = open_qr(&app.app, &tok_kom, "light").await;
+    let qr2 = open_finish_qr(&app.app, &tok_kom).await;
     let (_s, v) = finish_session(&app.app, &tok_student, &qr2).await;
     call(
         &app.app,
@@ -463,7 +463,7 @@ async fn role_restrictions(pool: PgPool) {
     .await;
     assert_eq!(st, StatusCode::CONFLICT, "active session is not pending");
     app.clock.advance_seconds(600);
-    let (st, _) = finish_photo_only(&app.app, &tok_student).await;
+    let (st, _) = finish_with_qr(&app.app, &tok_student, &tok_kom).await;
     assert_eq!(st, StatusCode::OK);
     for path in ["confirm", "reject"] {
         let (st, _) = call(
@@ -479,7 +479,7 @@ async fn role_restrictions(pool: PgPool) {
 }
 
 #[sqlx::test]
-async fn qr_komendant_mismatch_at_finish(pool: PgPool) {
+async fn finish_qr_of_any_komendant_accepted(pool: PgPool) {
     let app = make_app(pool.clone(), Utc::now()).await;
     let group = create_group(&pool, "G").await;
     let _k1 = create_user(&pool, "komendant", "k1", "К1", None).await;
@@ -492,10 +492,25 @@ async fn qr_komendant_mismatch_at_finish(pool: PgPool) {
     let qr1 = open_qr(&app.app, &tok_k1, "light").await;
     start_session(&app.app, &tok_student, &qr1).await;
     app.clock.advance_seconds(1800);
-    let qr2 = open_qr(&app.app, &tok_k2, "light").await;
+    // the shift changed: k2 shows the finish QR, the session stays k1's to confirm
+    let qr2 = open_finish_qr(&app.app, &tok_k2).await;
     let (st, v) = finish_session(&app.app, &tok_student, &qr2).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "pending_confirmation");
+    let sid = v["id"].as_str().unwrap();
+    let (st, _) = call(&app.app, "POST", &format!("/api/komendant/sessions/{sid}/confirm"), Some(&tok_k2), None).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let (st, v) = call(&app.app, "POST", &format!("/api/komendant/sessions/{sid}/confirm"), Some(&tok_k1), None).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    // a deactivated komendant's finish QR is refused
+    let qr3 = open_finish_qr(&app.app, &tok_k2).await;
+    let start = open_qr(&app.app, &tok_k1, "light").await;
+    start_session(&app.app, &tok_student, &start).await;
+    sqlx::query("UPDATE users SET is_active = FALSE WHERE login = 'k2'").execute(&pool).await.unwrap();
+    let (st, v) = finish_session(&app.app, &tok_student, &qr3).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    assert_eq!(v["error"]["code"], "qr_komendant_mismatch");
+    assert_eq!(v["error"]["code"], "invalid_qr");
 }
 
 #[sqlx::test]
@@ -839,7 +854,7 @@ async fn credited_session(app: &common::TestApp, tok_student: &str, tok_kom: &st
     let v = start_session(&app.app, tok_student, &qr).await;
     let sid = v["id"].as_str().unwrap().to_string();
     app.clock.advance_seconds(secs);
-    let (st, v) = finish_photo_only(&app.app, tok_student).await;
+    let (st, v) = finish_with_qr(&app.app, tok_student, tok_kom).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let (st, v) = call(
         &app.app,
@@ -931,7 +946,7 @@ async fn pending_session(app: &common::TestApp, tok_student: &str, tok_kom: &str
     let qr = open_qr(&app.app, tok_kom, "light").await;
     let sid = start_session(&app.app, tok_student, &qr).await["id"].as_str().unwrap().to_string();
     app.clock.advance_seconds(600);
-    let (st, v) = finish_photo_only(&app.app, tok_student).await;
+    let (st, v) = finish_with_qr(&app.app, tok_student, tok_kom).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     sid
 }
@@ -946,8 +961,14 @@ async fn finish_photo_only(app: &axum::Router, tok: &str) -> (StatusCode, serde_
     .await
 }
 
+/// komendant opens the finish QR, student scans it and sends the photo
+async fn finish_with_qr(app: &axum::Router, tok_student: &str, tok_kom: &str) -> (StatusCode, serde_json::Value) {
+    let qr = open_finish_qr(app, tok_kom).await;
+    finish_session(app, tok_student, &qr).await
+}
+
 #[sqlx::test]
-async fn finish_without_qr_and_multipart_errors(pool: PgPool) {
+async fn finish_requires_finish_qr_and_multipart_errors(pool: PgPool) {
     let app = make_app(pool.clone(), Utc::now()).await;
     setup(&app, &pool).await;
     let tok_student = login(&app.app, "stud1").await;
@@ -981,8 +1002,26 @@ async fn finish_without_qr_and_multipart_errors(pool: PgPool) {
     let resp = app.app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-    // photo only, no QR -> accepted
+    // photo only, no QR -> missing_qr
     let (st, v) = finish_photo_only(&app.app, &tok_student).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "missing_qr");
+
+    // the start QR does not finish a session
+    let start_qr = open_qr(&app.app, &tok_kom, "light").await;
+    let (st, v) = finish_session(&app.app, &tok_student, &start_qr).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "wrong_qr_kind");
+
+    // the finish QR does not start one
+    let finish_qr = open_finish_qr(&app.app, &tok_kom).await;
+    let (st, v) = call(&app.app, "POST", "/api/student/sessions/start", Some(&tok_student), Some(json!({"qr": finish_qr}))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(v["error"]["code"], "wrong_qr_kind");
+
+    // finish QR scanned up to 6 min ago is still accepted (current + previous 3-min window)
+    app.clock.advance_seconds(170);
+    let (st, v) = finish_session(&app.app, &tok_student, &finish_qr).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     assert_eq!(v["status"], "pending_confirmation");
 }
@@ -1199,7 +1238,7 @@ async fn admin_resolves_stuck_pending_session(pool: PgPool) {
     let v = start_session(&app.app, &tok_student, &qr).await;
     let sid = v["id"].as_str().unwrap().to_string();
     app.clock.advance_seconds(1800);
-    finish_photo_only(&app.app, &tok_student).await;
+    finish_with_qr(&app.app, &tok_student, &tok_kom).await;
     // komendant leaves: the session would block the student forever
     sqlx::query("UPDATE users SET is_active = FALSE WHERE id = $1").bind(kom).execute(&pool).await.unwrap();
 

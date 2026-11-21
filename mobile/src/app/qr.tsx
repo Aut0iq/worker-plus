@@ -5,32 +5,39 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useKeepAwake } from 'expo-keep-awake';
 import QRCode from 'react-native-qrcode-svg';
 import { api } from '@/api/client';
-import type { QrOpenResponse } from '@/api/types/QrOpenResponse';
+import type { FinishQrResponse } from '@/api/types/FinishQrResponse';
 import { difficultyLabels } from '@/labels';
 import { Button } from '@/components/ui';
 import { makeStyles } from '@/theme';
 
+// start QR (light/hard, changes every 30 s) or finish QR (`?kind=finish`, every 3 min)
 export default function QrScreen() {
   useKeepAwake();
   const styles = useStyles();
-  const { difficulty } = useLocalSearchParams<{ difficulty: string }>();
+  const { difficulty, kind } = useLocalSearchParams<{ difficulty: string; kind: string }>();
+  const finish = kind === 'finish';
   const d = difficulty === 'hard' ? 'hard' : 'light';
+  const key = finish ? 'finish' : d;
   const { width } = useWindowDimensions();
 
   const qc = useQueryClient();
   // opening a QR is logged on the server; afterwards we just refresh it
   const open = useMutation({
-    mutationFn: () => api.post<QrOpenResponse>('/api/komendant/qr/open', { difficulty: d }),
-    onSuccess: (data) => qc.setQueryData(['komendant-qr', d], data),
+    mutationFn: () =>
+      finish
+        ? api.post<FinishQrResponse>('/api/komendant/qr/finish/open')
+        : api.post<FinishQrResponse>('/api/komendant/qr/open', { difficulty: d }),
+    onSuccess: (data) => qc.setQueryData(['komendant-qr', key], data),
   });
   useEffect(() => {
     open.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [d]);
+  }, [key]);
 
   const qr = useQuery({
-    queryKey: ['komendant-qr', d],
-    queryFn: () => api.get<QrOpenResponse>(`/api/komendant/qr?difficulty=${d}`),
+    queryKey: ['komendant-qr', key],
+    queryFn: () =>
+      api.get<FinishQrResponse>(finish ? '/api/komendant/qr/finish' : `/api/komendant/qr?difficulty=${d}`),
     refetchInterval: 10_000,
   });
 
@@ -38,7 +45,7 @@ export default function QrScreen() {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>{difficultyLabels[d]}</Text>
+      <Text style={styles.title}>{finish ? 'Завершение ОПТ' : difficultyLabels[d]}</Text>
       <View style={styles.qrBox}>
         {value ? (
           <QRCode value={value} size={Math.min(width - 80, 340)} backgroundColor="white" />

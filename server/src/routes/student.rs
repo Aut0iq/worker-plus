@@ -156,12 +156,20 @@ async fn finish_session(
         AppError::bad_request("bad_photo_type", "Фото должно быть jpeg, png, heic или webp")
     })?;
 
-    // QR on finish is optional: the session is already bound to its komendant.
-    // If the app still sends one, it must belong to the same komendant.
-    let verified = match qr.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-        Some(q) => Some(qr::verify(&state.config.qr_secret, q, state.clock.now())?),
-        None => None,
-    };
+    // finishing needs the komendant's finish QR (3-minute code). Any active komendant
+    // will do (shifts change); the session stays with the komendant who started it.
+    let qr = qr.as_deref().map(str::trim).filter(|q| !q.is_empty()).ok_or_else(|| {
+        AppError::bad_request("missing_qr", "Отсканируйте QR завершения у коменданта")
+    })?;
+    let finish_komendant = qr::verify_finish(&state.config.qr_secret, qr, state.clock.now())?;
+    let kom_ok: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM users WHERE id = $1 AND role = 'komendant' AND is_active")
+            .bind(finish_komendant)
+            .fetch_optional(&state.pool)
+            .await?;
+    if kom_ok.is_none() {
+        return Err(AppError::bad_request("invalid_qr", "Недействительный QR-код"));
+    }
 
     let session = sqlx::query_as::<_, WorkSession>(
         "SELECT * FROM work_sessions WHERE student_id = $1 AND status = 'active'",
@@ -170,13 +178,6 @@ async fn finish_session(
     .fetch_optional(&state.pool)
     .await?
     .ok_or_else(|| AppError::conflict("no_active_session", "Нет активного ОПТ"))?;
-
-    if verified.is_some_and(|v| v.komendant_id != session.komendant_id) {
-        return Err(AppError::bad_request(
-            "qr_komendant_mismatch",
-            "QR-код принадлежит другому коменданту",
-        ));
-    }
 
     let now = state.clock.now();
     let raw_seconds = (now - session.started_at).num_seconds().max(0);
@@ -222,7 +223,11 @@ async fn finish_session(
                 AuditRecord::new("session_finish")
                     .actor(auth.user.id, "student")
                     .entity("session", session.id)
-                    .details(json!({"raw_seconds": raw_seconds, "credited_minutes": credited})),
+                    .details(json!({
+                        "raw_seconds": raw_seconds,
+                        "credited_minutes": credited,
+                        "finish_komendant_id": finish_komendant,
+                    })),
             )
             .await?;
         state
@@ -232,7 +237,7 @@ async fn finish_session(
                 "session_finished",
                 Some(auth.user.id),
                 Some(session.id),
-                Some(json!({"ended_at": now, "credited_minutes": credited})),
+                Some(json!({"ended_at": now, "credited_minutes": credited, "finish_komendant_id": finish_komendant})),
             )
             .await?;
         state

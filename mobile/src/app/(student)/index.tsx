@@ -145,7 +145,7 @@ export default function StudentHome() {
             Лимит — {maxHours} ч реального времени. Если превысить, общественно полезный труд не засчитается.
             {overLimit ? ' Лимит превышен!' : ''}
           </Text>
-          <Button title="Завершить (сфотографировать работу)" onPress={() => router.push('/finish')} />
+          <Button title="Завершить ОПТ (QR + фото)" onPress={() => router.push('/finish')} />
         </Card>
       )}
 
