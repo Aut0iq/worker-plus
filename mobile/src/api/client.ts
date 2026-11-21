@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://185.28.173.203:8080').replace(/\/+$/, '');
+let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://185.28.173.203').replace(/\/+$/, '');
 let token: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 

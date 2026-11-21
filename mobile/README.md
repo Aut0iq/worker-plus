@@ -9,7 +9,7 @@ npm install
 npx expo start        # затем отсканировать QR в Expo Go (Android/iOS)
 ```
 
-Адрес API: переменная `EXPO_PUBLIC_API_URL` (по умолчанию `http://192.168.31.63:8080`),
+Адрес API: переменная `EXPO_PUBLIC_API_URL` (по умолчанию `http://185.28.173.203`),
 либо поле «Адрес сервера» на экране входа (сохраняется в SecureStore).
 
 ## Push-уведомления
