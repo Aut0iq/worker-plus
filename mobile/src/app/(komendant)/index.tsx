@@ -25,7 +25,7 @@ export default function KomendantHome() {
       <Card>
         <Text style={styles.title}>QR для завершения ОПТ</Text>
         <Text style={styles.sub}>
-          Студент сканирует его в конце работы, затем фотографирует результат. Код меняется раз в 3 минуты.
+          Студент фотографирует результат работы, затем сканирует этот код. Код меняется раз в 3 минуты.
         </Text>
         <Button title="Открыть QR завершения" onPress={() => router.push('/qr?kind=finish')} style={{ marginTop: 16 }} />
       </Card>

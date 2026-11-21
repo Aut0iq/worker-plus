@@ -29,18 +29,15 @@ function WebNoCamera() {
   );
 }
 
-// a server answer that means "scan the komendant's finish QR again" (the photo is kept)
-const QR_ERRORS = ['missing_qr', 'invalid_qr', 'expired_qr', 'wrong_qr_kind'];
-
-// finishing = the komendant's finish QR (changes every 3 min) + a photo of the work
+// finishing = a photo of the work, then the komendant's finish QR (changes every 3 min);
+// the QR is scanned right before sending so it cannot go stale while the student shoots
 function NativeFinish() {
   const styles = useStyles();
   const qc = useQueryClient();
   const cam = useRef<CameraView>(null);
   const [perm, requestPerm] = useCameraPermissions();
   const [step, setStep] = useState<Step>('photo');
-  const [qr, setQr] = useState<string | null>(null);
-  const [scanning, setScanning] = useState(true);
+  const [scanning, setScanning] = useState(false);
   const [photo, setPhoto] = useState<{ uri: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState<SessionDto | null>(null);
@@ -75,8 +72,8 @@ function NativeFinish() {
     }
   };
 
-  const submit = async () => {
-    if (!photo || !qr) return;
+  const submit = async (qr: string) => {
+    if (!photo) return;
     setStep('sending');
     setErr(null);
     try {
@@ -98,8 +95,8 @@ function NativeFinish() {
           // still offline: show the original error
         }
       }
+      // the photo is kept: a QR error (expired, wrong kind) needs only a rescan
       setErr(errorText(e, 'Ошибка отправки'));
-      if (e instanceof ApiError && QR_ERRORS.includes(e.code)) setQr(null);
       setStep('photo');
     }
   };
@@ -122,19 +119,11 @@ function NativeFinish() {
         visible={scanning}
         onClose={() => setScanning(false)}
         onScan={(data) => {
-          setQr(data);
-          setErr(null);
           setScanning(false);
+          void submit(data);
         }}
       />
-      {step === 'photo' && !qr && (
-        <View style={styles.center}>
-          <Text style={styles.title}>Шаг 1 из 2</Text>
-          <Text style={styles.sub}>Отсканируйте QR завершения у коменданта.</Text>
-          <Button title="Сканировать QR" onPress={() => setScanning(true)} style={{ marginTop: 16 }} />
-        </View>
-      )}
-      {step === 'photo' && !!qr && (
+      {step === 'photo' && (
         <>
           {!photo ? (
             perm?.granted ? (
@@ -160,8 +149,11 @@ function NativeFinish() {
               <View style={styles.bottomRow}>
                 <Button title="Переснять" outline onPress={() => setPhoto(null)} style={{ flex: 1 }} />
                 <Button
-                  title="Отправить"
-                  onPress={() => void submit()}
+                  title="Сканировать QR и отправить"
+                  onPress={() => {
+                    setErr(null);
+                    setScanning(true);
+                  }}
                   style={{ flex: 1.4, marginLeft: 8 }}
                 />
               </View>
