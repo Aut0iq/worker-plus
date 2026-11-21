@@ -26,6 +26,9 @@ fn spawn_cleanup_loop(state: AppState) {
             if let Err(e) = cleanup_notifications(&state).await {
                 tracing::error!(error = ?e, "notification cleanup failed");
             }
+            if let Err(e) = cleanup_photos(&state).await {
+                tracing::error!(error = ?e, "photo cleanup failed");
+            }
         }
     });
 }
@@ -37,6 +40,52 @@ pub async fn cleanup_notifications(state: &AppState) -> AppResult<u64> {
         .execute(&state.pool)
         .await?;
     Ok(res.rows_affected())
+}
+
+/// Work photos (a swept floor, etc.) are only evidence for the komendant/admin check.
+/// Once decided (admin reviewed the photo, or the komendant rejected the session) the
+/// photo is deleted after 3 days; otherwise 7 days after the session ended. A session
+/// still waiting for the komendant keeps its photo until it is resolved.
+const PHOTO_DECIDED_DAYS: i64 = 3;
+const PHOTO_RETENTION_DAYS: i64 = 7;
+
+pub async fn cleanup_photos(state: &AppState) -> AppResult<usize> {
+    let now = state.clock.now();
+    let decided_cutoff = now - chrono::Duration::days(PHOTO_DECIDED_DAYS);
+    let cutoff = now - chrono::Duration::days(PHOTO_RETENTION_DAYS);
+    // DB first, files second: a failed unlink leaves an orphan file, never a dangling path.
+    // An unreviewed photo that is gone has nothing left to review.
+    // A komendant rejection has no timestamp of its own: it counts from ended_at.
+    let paths: Vec<String> = sqlx::query_scalar(
+        "WITH old AS (
+             SELECT id, photo_path FROM work_sessions
+             WHERE photo_path IS NOT NULL AND status <> 'pending_confirmation'
+               AND (ended_at < $2
+                    OR (status = 'komendant_rejected' AND ended_at < $1)
+                    OR (photo_review IN ('approved', 'rejected') AND photo_reviewed_at < $1))
+             FOR UPDATE
+         )
+         UPDATE work_sessions w SET photo_path = NULL,
+             photo_review = CASE WHEN w.photo_review = 'pending' THEN NULL ELSE w.photo_review END
+         FROM old WHERE w.id = old.id
+         RETURNING old.photo_path",
+    )
+    .bind(decided_cutoff)
+    .bind(cutoff)
+    .fetch_all(&state.pool)
+    .await?;
+    for rel in &paths {
+        // photo_path is generated server-side (uuid.ext); guard anyway
+        if rel.contains('/') || rel.contains('\\') || rel.contains("..") {
+            continue;
+        }
+        match tokio::fs::remove_file(state.config.photo_dir.join(rel)).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => tracing::warn!(error = ?e, path = %rel, "photo delete failed"),
+        }
+    }
+    Ok(paths.len())
 }
 
 fn spawn_expiry_loop(state: AppState) {

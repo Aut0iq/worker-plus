@@ -853,6 +853,89 @@ async fn credited_session(app: &common::TestApp, tok_student: &str, tok_kom: &st
     sid
 }
 
+#[sqlx::test]
+async fn work_photos_deleted_after_three_or_seven_days(pool: PgPool) {
+    let app = make_app(pool.clone(), Utc::now()).await;
+    setup(&app, &pool).await;
+    let tok_student = login(&app.app, "stud1").await;
+    let tok_kom = login(&app.app, "kom1").await;
+    let tok_admin = login(&app.app, "admin1").await;
+    let photo = |id: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT photo_path, photo_review FROM work_sessions WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let id = |s: String| Uuid::parse_str(&s).unwrap();
+
+    // credited + photo approved by the admin -> 3 days
+    let approved = credited_session(&app, &tok_student, &tok_kom, 1800).await;
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        &format!("/api/admin/sessions/{approved}/photo-review"),
+        Some(&tok_admin),
+        Some(json!({"approved": true})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // credited, photo never reviewed -> 7 days
+    let unreviewed = credited_session(&app, &tok_student, &tok_kom, 1800).await;
+    // rejected by the komendant -> 3 days
+    let rejected = pending_session(&app, &tok_student, &tok_kom).await;
+    let (st, v) = call(
+        &app.app,
+        "POST",
+        &format!("/api/komendant/sessions/{rejected}/reject"),
+        Some(&tok_kom),
+        Some(json!({"reason": "не то"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // still waiting for the komendant -> kept
+    let waiting = pending_session(&app, &tok_student, &tok_kom).await;
+
+    let (approved, unreviewed, rejected, waiting) = (id(approved), id(unreviewed), id(rejected), id(waiting));
+    let file = |p: Option<String>| app.state.config.photo_dir.join(p.unwrap());
+    let approved_file = file(photo(approved).await.0);
+    let unreviewed_file = file(photo(unreviewed).await.0);
+    let rejected_file = file(photo(rejected).await.0);
+    let waiting_file = file(photo(waiting).await.0);
+
+    app.clock.advance_seconds(2 * 86400);
+    assert_eq!(prila_server::jobs::cleanup_photos(&app.state).await.unwrap(), 0);
+
+    app.clock.advance_seconds(2 * 86400); // 4 days
+    assert_eq!(prila_server::jobs::cleanup_photos(&app.state).await.unwrap(), 2);
+    assert!(!approved_file.exists() && !rejected_file.exists());
+    assert_eq!(photo(approved).await, (None, Some("approved".into())), "review result kept");
+    assert!(unreviewed_file.exists());
+
+    app.clock.advance_seconds(4 * 86400); // 8 days
+    assert_eq!(prila_server::jobs::cleanup_photos(&app.state).await.unwrap(), 1);
+    assert!(!unreviewed_file.exists());
+    assert_eq!(photo(unreviewed).await, (None, None), "no photo, nothing left to review");
+    assert!(waiting_file.exists(), "komendant has not decided yet");
+    assert!(photo(waiting).await.0.is_some());
+}
+
+/// student works 10 minutes and finishes; the session waits for the komendant
+async fn pending_session(app: &common::TestApp, tok_student: &str, tok_kom: &str) -> String {
+    let qr = open_qr(&app.app, tok_kom, "light").await;
+    let sid = start_session(&app.app, tok_student, &qr).await["id"].as_str().unwrap().to_string();
+    app.clock.advance_seconds(600);
+    let (st, v) = finish_photo_only(&app.app, tok_student).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    sid
+}
+
 async fn finish_photo_only(app: &axum::Router, tok: &str) -> (StatusCode, serde_json::Value) {
     call_multipart(
         app,
