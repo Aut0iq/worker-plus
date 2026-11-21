@@ -18,7 +18,7 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: '#f0f2f5' }}>
       {ctx}
-      <Card title="Прила — вход для администратора" style={{ width: 360 }}>
+      <Card title="Work+ — вход для администратора" style={{ width: 360 }}>
         <Form layout="vertical" onFinish={onFinish}>
           <Form.Item name="login" label="Логин" rules={[{ required: true }]}>
             <Input autoFocus />

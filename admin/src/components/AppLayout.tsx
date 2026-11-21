@@ -30,7 +30,7 @@ export default function AppLayout() {
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Layout.Sider width={210} theme="dark">
-        <div style={{ color: '#fff', padding: 16, fontWeight: 600, fontSize: 18 }}>Прила</div>
+        <div style={{ color: '#fff', padding: 16, fontWeight: 600, fontSize: 18 }}>Work+</div>
         <Menu
           theme="dark"
           mode="inline"
