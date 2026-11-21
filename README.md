@@ -1,20 +1,26 @@
-# Prila — учёт отработок студентов
+# Work+ — учёт отработок студентов
 
-> Полная документация для передачи проекта (ТЗ, решения, статус, задачи): [docs/HANDOFF.md](docs/HANDOFF.md)
+> Полная документация для передачи проекта (ТЗ, решения, статус, задачи): [docs/HANDOFF.md](docs/HANDOFF.md).
+> Текущие задачи и решения заказчика — [NEEDTOFIX.md](NEEDTOFIX.md).
 
 Учёт часов отработки студентов общежития: REST API на Rust (axum + sqlx/Postgres,
 `server/`), веб-панель администратора React (`admin/`) и мобильное приложение Expo
 для студентов, комендантов и преподавателей (`mobile/`, см. [mobile/README.md](mobile/README.md)).
+Приложение собирается в Android APK (`ru.workerplus.app`) и в веб-версию, которую
+раздаёт сам сервер по пути `/app` (ПК и iPhone через Safari; без камеры).
 
 ## Роли
 
-- **student** — студент: видит долг/баланс, начинает/завершает сессии по QR,
-  покупает награды за минуты баланса.
-- **teacher** — преподаватель: назначает часы отработки студентам по группам.
-- **komendant** — комендант: показывает QR для старта/финиша сессий,
+- **student** — студент: видит долг/баланс, начинает отработку по QR коменданта,
+  завершает фотографией работы, покупает награды за минуты баланса.
+- **teacher** — преподаватель: назначает часы (целые часы, ≤ 100 за раз) студентам
+  по группам, видит должников; получает уведомление, когда студент отработал часы.
+- **komendant** — комендант: показывает QR для старта отработки,
   подтверждает/отклоняет сессии.
 - **admin** — администратор: веб-панель, пользователи, группы, награды, заказы,
-  проверка фото, месячные сводки, логи. Может вызывать teacher-эндпоинты.
+  проверка фото, решение по сессиям вместо коменданта, месячные сводки, логи.
+  Может всё, что преподаватель, и **только он** списывает часы (корректировка
+  долга/баланса — в админке «Корр.» и в приложении «Списать часы»).
 
 ## Быстрый старт (docker-compose)
 
@@ -23,7 +29,17 @@ cp .env.example .env   # заполнить DB_PASSWORD, JWT_SECRET, QR_SECRET, 
 docker compose up --build
 ```
 
-API слушает `http://localhost:8080`, Postgres — `postgres:16`.
+Сервер слушает `http://localhost:8080` (порт — `PORT` в `.env`): API — `/api`,
+админ-панель — `/`, веб-версия приложения — `/app`. Postgres — `postgres:16`.
+Образ собирает Rust-сервер, админку и веб-версию приложения (`server/Dockerfile`).
+
+## Android APK
+
+Собирается только в GitHub Actions: пуш тега `v1.2.3` → подписанный
+`worker-plus-1.2.3.apk` в GitHub Release (`.github/workflows/release-android.yml`).
+Секреты репозитория: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` (подпись),
+`EAS_PROJECT_ID` (проект expo.dev) и `GOOGLE_SERVICES_JSON` (Firebase) — для push.
+Ключ FCM V1 (сервисный аккаунт Firebase) загружен в Expo (`eas credentials`).
 
 ### HTTPS на VPS
 
@@ -96,15 +112,19 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 `{ items, total, page, per_page }`. Авторизация: `Authorization: Bearer <jwt>`.
 
 ### Auth / профиль / уведомления
-- `POST /api/auth/login` `{login,password}` → `{token,user}`; лимит: 10 неудачных попыток за 15 мин (по ip+login) → 429 `too_many_attempts`
-- `GET /api/me` · `POST /api/me/password` `{old_password,new_password}`
+- `POST /api/auth/login` `{login,password}` → `{token,user}`; логин без учёта регистра;
+  лимит: 10 неудачных попыток за 15 мин по ip+login и 50 по ip → 429 `too_many_attempts`
+- `GET /api/me` · `POST /api/me/password` `{old_password,new_password}` → `{token}`
+  (смена/сброс пароля отзывает старые токены)
 - `POST /api/me/push-token` / `DELETE /api/me/push-token` `{token}`
-- `GET /api/notifications` · `POST /api/notifications/{id}/read` · `POST /api/notifications/read-all`
+- `GET /api/notifications` · `GET /api/notifications/unread-count` ·
+  `POST /api/notifications/{id}/read` · `POST /api/notifications/read-all`
 - `GET /api/health`
 
 ### Студент
 - `POST /api/student/sessions/start` `{qr}`
-- `POST /api/student/sessions/finish` (multipart: `qr`, `photo` jpeg/png/heic/webp ≤10МБ)
+- `POST /api/student/sessions/finish` (multipart: `photo` jpeg/png/heic/webp ≤10МБ;
+  `qr` необязателен — если передан, должен быть того же коменданта)
 - `GET /api/student/sessions` · `GET /api/student/sessions/active` (с `server_now`)
 - `GET /api/student/assignments` · `GET /api/student/orders` · `GET /api/student/orders/{id}`
 - `GET /api/rewards` · `POST /api/rewards/{id}/buy` · `GET /api/rewards/{id}/image`
@@ -118,8 +138,9 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 
 ### Преподаватель (+admin)
 - `GET /api/groups` · `GET /api/groups/{id}/students`
+- `GET /api/students/debtors` — студенты с долгом
 - `GET /api/students/{id}` — профиль + сессии + назначения
-- `POST /api/students/{id}/assignments` `{minutes, reason}`
+- `POST /api/students/{id}/assignments` `{minutes, reason?}` (≤ 100 ч за раз)
 
 ### Админ
 - Пользователи: `GET/POST /api/admin/users` (фильтры role, group_id, q, is_active),
@@ -130,7 +151,8 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 - Группы: `GET/POST /api/admin/groups`, `PATCH/DELETE /api/admin/groups/{id}`
 - Сессии: `GET /api/admin/sessions` (status, photo_review, student_id, komendant_id, from, to),
   `GET /api/admin/sessions/{id}/photo`,
-  `POST /api/admin/sessions/{id}/photo-review` `{approved, comment}`
+  `POST /api/admin/sessions/{id}/photo-review` `{approved, comment}`,
+  `POST /api/admin/sessions/{id}/resolve` `{confirm, reason?}` — решение за коменданта
 - Награды: `POST /api/admin/rewards`, `PATCH/DELETE /api/admin/rewards/{id}`,
   `POST /api/admin/rewards/{id}/image` (multipart)
 - Заказы: `GET /api/admin/orders`, `POST /api/admin/orders/{id}/issue`, `POST /api/admin/orders/{id}/cancel`
@@ -143,5 +165,8 @@ applied_to_debt / applied_to_balance; photo_review: pending → approved/rejecte
 
 - каждые 60 с: `active` сессии старше `MAX_SESSION_HOURS` → `expired` (+уведомления).
 - каждые 60 с: 1-го числа после 00:05 локального времени → сводка за прошлый месяц.
+- каждый час: удаление прочитанных уведомлений старше 180 дней и фото работы —
+  через 3 дня после решения (проверка фото админом или отклонение комендантом),
+  иначе через 7 дней после окончания сессии; фото сессии, ждущей коменданта, не трогается.
 
 Типы DTO для клиентов экспортируются в `shared/api-types/*.ts` через `cargo test` (ts-rs).

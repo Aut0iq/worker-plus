@@ -2,14 +2,9 @@
 
 ## Осталось сделать
 
-1. **Push в релизном APK:** создать проект на expo.dev и Firebase-проект Android
-   (`ru.workerplus.app`), добавить в GitHub secrets `EAS_PROJECT_ID` и
-   `GOOGLE_SERVICES_JSON` (содержимое google-services.json), FCM-ключ загрузить
-   в EAS (expo.dev → Credentials). На сервере `EXPO_PUSH_ENABLED=true` уже включён
-   (2026-11-21). `mobile/app.config.ts` подставляет оба значения из окружения.
-2. **Новый package id `ru.workerplus.app`** = новое приложение: на телефонах
-   удалить старое «Prila» и поставить новый APK (релиз `v1.1.0`). APK собирается
-   только в GitHub Actions (тег `v*`), локально не собираем.
+1. **Новый package id `ru.workerplus.app`** = новое приложение: на телефонах
+   удалить старое «Prila» и поставить APK из релиза `v1.1.0` (в нём уже push).
+   APK собирается только в GitHub Actions (тег `v*`), локально не собираем.
 
 ## Долгий ящик (не напоминать — заказчик напомнит сам)
 

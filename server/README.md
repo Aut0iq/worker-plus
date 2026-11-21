@@ -1,6 +1,7 @@
-# prila-server
+# Work+ server (crate `prila-server`)
 
-Rust-сервер (Axum + SQLx/Postgres) для учёта отработок студентов.
+Rust-сервер (Axum + SQLx/Postgres) для учёта отработок студентов. Раздаёт API (`/api`),
+админ-панель (`/`) и веб-версию мобильного приложения (`/app`) из `STATIC_DIR`.
 Общие сведения, переменные окружения и полный список API — в корневом `README.md`.
 
 ## Запуск
@@ -33,7 +34,8 @@ cargo test                  # юнит + интеграционные (#[sqlx::t
 - `src/routes/` — обработчики: auth, me, student, komendant, teacher, rewards, admin
 - `src/import.rs` — импорт пользователей CSV/XLSX (одна транзакция на весь файл)
 - `src/summaries.rs` — месячные сводки + экспорт `.xlsx` (`fmt_hm` → «1ч 44м»)
-- `src/jobs.rs` — фоновые задачи: истечение сессий > `MAX_SESSION_HOURS`, сводка 1-го числа после 00:05
+- `src/jobs.rs` — фоновые задачи: истечение сессий > `MAX_SESSION_HOURS`, сводка 1-го числа после 00:05,
+  ежечасная очистка старых уведомлений и фото работы (3 дня после решения / 7 дней)
 - `migrations/` — SQL-миграции (`sqlx::migrate!` при старте)
 - `tests/` — интеграционные тесты потоков
 
