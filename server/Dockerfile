@@ -8,6 +8,14 @@ RUN npm ci
 COPY admin/ ./
 RUN npm run build
 
+# ---- mobile app, web build (served at /app) ----
+FROM node:22-alpine AS web-build
+WORKDIR /build
+COPY mobile/package.json mobile/package-lock.json ./
+RUN npm ci
+COPY mobile/ ./
+RUN npx expo export -p web --output-dir dist
+
 # ---- rust build ----
 FROM rust:1-slim AS server-build
 WORKDIR /app
@@ -25,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 COPY --from=server-build /app/target/release/prila-server /app/prila-server
 COPY --from=admin-build /build/dist /app/static
+COPY --from=web-build /build/dist /app/static/app
 ENV STATIC_DIR=/app/static \
     PHOTO_DIR=/data/photos \
     LOG_DIR=/data/logs \

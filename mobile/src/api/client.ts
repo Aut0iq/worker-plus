@@ -1,4 +1,5 @@
-import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import { SecureStore } from '../storage';
 
 export class ApiError extends Error {
   status: number;
@@ -10,7 +11,9 @@ export class ApiError extends Error {
   }
 }
 
-let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? 'http://185.28.173.203').replace(/\/+$/, '');
+// the web build is served by the API server itself, so it talks to its own origin
+const defaultUrl = Platform.OS === 'web' ? window.location.origin : 'http://185.28.173.203';
+let baseUrl = (process.env.EXPO_PUBLIC_API_URL ?? defaultUrl).replace(/\/+$/, '');
 let token: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 

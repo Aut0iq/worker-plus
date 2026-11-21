@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useColorScheme } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { SecureStore } from './storage';
 
 export const lightColors = {
   primary: '#208AEF',

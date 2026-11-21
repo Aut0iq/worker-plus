@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ActivityIndicator, Alert, Image, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -7,13 +7,30 @@ import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { api, ApiError, errorText } from '@/api/client';
 import type { ActiveSessionResponse } from '@/api/types/ActiveSessionResponse';
 import type { SessionDto } from '@/api/types/SessionDto';
+import { WEB_NO_CAMERA } from '@/components/Scanner';
 import { Button, Card, ErrorText } from '@/components/ui';
 import { makeStyles } from '@/theme';
 
 type Step = 'photo' | 'sending' | 'done';
 
-// the session is already bound to its komendant: finishing needs only the photo
 export default function FinishScreen() {
+  return Platform.OS === 'web' ? <WebNoCamera /> : <NativeFinish />;
+}
+
+function WebNoCamera() {
+  const styles = useStyles();
+  return (
+    <View style={styles.center}>
+      <Card>
+        <Text style={styles.sub}>{WEB_NO_CAMERA}</Text>
+        <Button title="Назад" onPress={() => router.back()} style={{ marginTop: 16 }} />
+      </Card>
+    </View>
+  );
+}
+
+// the session is already bound to its komendant: finishing needs only the photo
+function NativeFinish() {
   const styles = useStyles();
   const qc = useQueryClient();
   const cam = useRef<CameraView>(null);

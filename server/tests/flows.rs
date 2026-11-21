@@ -1146,17 +1146,26 @@ async fn static_admin_cache_headers(pool: PgPool) {
     std::fs::create_dir_all(tmp.path().join("assets")).unwrap();
     std::fs::write(tmp.path().join("index.html"), "<html></html>").unwrap();
     std::fs::write(tmp.path().join("assets/app-abc123.js"), "x").unwrap();
+    std::fs::create_dir_all(tmp.path().join("app/_expo/static/js")).unwrap();
+    std::fs::write(tmp.path().join("app/index.html"), "<html>web-app</html>").unwrap();
+    std::fs::write(tmp.path().join("app/_expo/static/js/entry-1.js"), "x").unwrap();
     let dir = tmp.path().to_path_buf();
     let app = make_app_with(pool, Utc::now(), move |c| c.static_dir = Some(dir)).await;
-    for (path, cache) in [
-        ("/", "no-cache"),
-        ("/users", "no-cache"),
-        ("/assets/app-abc123.js", "public, max-age=31536000, immutable"),
+    let immutable = "public, max-age=31536000, immutable";
+    for (path, cache, body) in [
+        ("/", "no-cache", "<html></html>"),
+        ("/users", "no-cache", "<html></html>"),
+        ("/assets/app-abc123.js", immutable, "x"),
+        ("/app", "no-cache", "<html>web-app</html>"),
+        ("/app/login", "no-cache", "<html>web-app</html>"),
+        ("/app/_expo/static/js/entry-1.js", immutable, "x"),
     ] {
         let req = axum::http::Request::builder().uri(path).body(axum::body::Body::empty()).unwrap();
         let resp = app.app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK, "{path}");
         assert_eq!(resp.headers()["cache-control"], cache, "{path}");
         assert_eq!(resp.headers()["x-content-type-options"], "nosniff");
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(bytes, body.as_bytes(), "{path}");
     }
 }

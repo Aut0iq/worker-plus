@@ -39,6 +39,18 @@ pub fn build_app(state: AppState) -> Router {
 
     let app = Router::new().nest("/api", api);
 
+    // web build of the mobile app lives in `<static_dir>/app` with its own SPA fallback
+    let app = match &state.config.static_dir {
+        Some(dir) if dir.join("app/index.html").exists() => {
+            let web = dir.join("app");
+            app.nest_service(
+                "/app",
+                ServeDir::new(&web).fallback(ServeFile::new(web.join("index.html"))),
+            )
+        }
+        _ => app,
+    };
+
     let app = match &state.config.static_dir {
         Some(dir) if dir.join("index.html").exists() => app
             .fallback_service(
@@ -82,7 +94,8 @@ async fn static_cache_headers(req: Request, next: Next) -> Response {
     if path == "/api" || path.starts_with("/api/") {
         return resp;
     }
-    let value = if path.starts_with("/assets/") && resp.status().is_success() {
+    let hashed = path.starts_with("/assets/") || path.starts_with("/app/_expo/static/");
+    let value = if hashed && resp.status().is_success() {
         "public, max-age=31536000, immutable"
     } else {
         "no-cache"

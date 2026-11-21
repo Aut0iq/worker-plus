@@ -1,19 +1,35 @@
 import { useEffect, useRef } from 'react';
-import { Modal, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Button } from './ui';
 import { makeStyles } from '../theme';
 
+// browsers give a page the camera only over HTTPS; the server is plain HTTP for now
+export const WEB_NO_CAMERA =
+  'В веб-версии камера пока недоступна. Сканировать QR и фотографировать работу можно в приложении для Android.';
+
+type Props = { visible: boolean; onScan: (data: string) => void; onClose: () => void };
+
 /** Full-screen QR scanner. Fires onScan once, then waits for onClose. */
-export function Scanner({
-  visible,
-  onScan,
-  onClose,
-}: {
-  visible: boolean;
-  onScan: (data: string) => void;
-  onClose: () => void;
-}) {
+export function Scanner(props: Props) {
+  return Platform.OS === 'web' ? <WebNoScanner {...props} /> : <NativeScanner {...props} />;
+}
+
+function WebNoScanner({ visible, onClose }: Props) {
+  const styles = useStyles();
+  return (
+    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+      <View style={styles.wrap}>
+        <View style={styles.center}>
+          <Text style={styles.msg}>{WEB_NO_CAMERA}</Text>
+          <Button title="Закрыть" onPress={onClose} />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function NativeScanner({ visible, onScan, onClose }: Props) {
   const [perm, requestPerm] = useCameraPermissions();
   const styles = useStyles();
   const fired = useRef(false);

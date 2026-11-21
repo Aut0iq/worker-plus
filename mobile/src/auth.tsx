@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import * as SecureStore from 'expo-secure-store';
+import { SecureStore } from './storage';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, loadServerUrl, setOnUnauthorized, setToken } from './api/client';
 import { getRegisteredPushToken, registerPush } from './push';
