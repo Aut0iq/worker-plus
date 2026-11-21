@@ -65,7 +65,7 @@ export default function StudentHistory() {
       }
       onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
       onEndReachedThreshold={0.4}
-      ListEmptyComponent={q.isLoading ? undefined : <Empty text="Отработок пока нет" />}
+      ListEmptyComponent={q.isLoading ? undefined : <Empty text="Записей ОПТ пока нет" />}
       renderItem={({ item }) => <Row s={item} tz={tz} />}
     />
   );

@@ -98,7 +98,7 @@ export default function StudentHome() {
       <Card>
         <View style={styles.money}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.moneyLabel}>Долг</Text>
+            <Text style={styles.moneyLabel}>Задание</Text>
             <Text style={[styles.moneyValue, { color: colors.danger }]}>
               {fmtMinutes(u?.debt_minutes)}
             </Text>
@@ -120,15 +120,15 @@ export default function StudentHome() {
 
       {!s && !active.isPending && (
         <Card>
-          <Text style={styles.hint}>Нет активной отработки</Text>
-          <Button title="Начать отработку" onPress={() => setScanning(true)} />
+          <Text style={styles.hint}>Сейчас ОПТ не идёт</Text>
+          <Button title="Начать ОПТ" onPress={() => setScanning(true)} />
           <ErrorText>{err}</ErrorText>
         </Card>
       )}
 
       {s?.status === 'active' && (
         <Card>
-          <Text style={styles.section}>Идёт отработка</Text>
+          <Text style={styles.section}>Идёт ОПТ</Text>
           <Text
             style={[
               styles.timer,
@@ -142,7 +142,7 @@ export default function StudentHome() {
             {s.komendant_name ?? '—'}
           </Text>
           <Text style={[styles.notice, (overLimit || almostOver) && { color: colors.danger }]}>
-            Лимит — {maxHours} ч реального времени. Если превысить, отработка не засчитается.
+            Лимит — {maxHours} ч реального времени. Если превысить, общественно полезный труд не засчитается.
             {overLimit ? ' Лимит превышен!' : ''}
           </Text>
           <Button title="Завершить (сфотографировать работу)" onPress={() => router.push('/finish')} />

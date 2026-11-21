@@ -61,7 +61,7 @@ function NativeFinish() {
     void qc.invalidateQueries({ queryKey: ['active-session'] });
     void qc.invalidateQueries({ queryKey: ['me'] });
     if (s.status === 'expired') {
-      Alert.alert('Не засчитано', 'Отработка длилась больше лимита и не засчитана', [
+      Alert.alert('Не засчитано', 'Общественно полезный труд длился больше лимита и не засчитан', [
         { text: 'OK', onPress: () => router.back() },
       ]);
     } else {
@@ -102,7 +102,7 @@ function NativeFinish() {
       <View style={styles.center}>
         <Card>
           <Text style={styles.title}>Фото отправлено</Text>
-          <Text style={styles.sub}>Отработка ожидает подтверждения коменданта.</Text>
+          <Text style={styles.sub}>Общественно полезный труд ожидает подтверждения коменданта.</Text>
           <Button title="На главную" onPress={() => router.back()} style={{ marginTop: 16 }} />
         </Card>
       </View>

@@ -156,11 +156,11 @@ pub fn to_xlsx(year: i32, month: i32, rows: &[SummaryRow]) -> Result<Vec<u8>, ru
     let headers = [
         "ФИО",
         "Группа",
-        "Сессий",
-        "Отработано",
+        "Записей ОПТ",
+        "Выполнено ОПТ",
         "Зачтено",
         "Назначено",
-        "Долг",
+        "Задание",
         "Баланс",
     ];
     for (c, h) in headers.iter().enumerate() {

@@ -9,8 +9,8 @@ export default function KomendantHome() {
   return (
     <View style={styles.wrap}>
       <Card>
-        <Text style={styles.title}>Открыть QR для отработки</Text>
-        <Text style={styles.sub}>Студент сканирует этот код, чтобы начать отработку. Для завершения QR не нужен — только фото.</Text>
+        <Text style={styles.title}>Открыть QR для ОПТ</Text>
+        <Text style={styles.sub}>Студент сканирует этот код, чтобы начать общественно полезный труд. Для завершения QR не нужен — только фото.</Text>
         <Button
           title="Лёгкие работы ×1"
           onPress={() => router.push('/qr?difficulty=light')}

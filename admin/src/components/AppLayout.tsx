@@ -17,7 +17,7 @@ const items = [
   { key: '/', icon: <DashboardOutlined />, label: 'Главная' },
   { key: '/users', icon: <TeamOutlined />, label: 'Пользователи' },
   { key: '/groups', icon: <GroupOutlined />, label: 'Группы' },
-  { key: '/sessions', icon: <ScheduleOutlined />, label: 'Отработки' },
+  { key: '/sessions', icon: <ScheduleOutlined />, label: 'ОПТ' },
   { key: '/shop', icon: <ShoppingOutlined />, label: 'Магазин' },
   { key: '/summaries', icon: <FileTextOutlined />, label: 'Сводки' },
   { key: '/logs', icon: <UnorderedListOutlined />, label: 'Журналы' },

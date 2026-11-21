@@ -37,7 +37,7 @@ export default function GroupStudents() {
             <View style={{ flex: 1 }}>
               <Text style={styles.title}>{u.full_name}</Text>
               <Text style={styles.sub}>
-                долг <Text style={{ color: colors.danger }}>{fmtMinutes(u.debt_minutes)}</Text>
+                задание <Text style={{ color: colors.danger }}>{fmtMinutes(u.debt_minutes)}</Text>
                 {'  ·  '}баланс{' '}
                 <Text style={{ color: colors.success }}>{fmtMinutes(u.balance_minutes)}</Text>
               </Text>

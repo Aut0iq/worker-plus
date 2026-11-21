@@ -20,7 +20,7 @@ export default function KomendantLayout() {
   return (
     <Tabs screenOptions={{ tabBarActiveTintColor: colors.primary }}>
       <Tabs.Screen name="index" options={{ title: 'QR', tabBarIcon: tabIcon('qr') }} />
-      <Tabs.Screen name="sessions" options={{ title: 'Отработки', tabBarIcon: tabIcon('timer') }} />
+      <Tabs.Screen name="sessions" options={{ title: 'ОПТ', tabBarIcon: tabIcon('timer') }} />
       <Tabs.Screen name="history" options={{ title: 'История', tabBarIcon: tabIcon('history') }} />
       <Tabs.Screen
         name="notifications"

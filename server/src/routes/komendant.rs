@@ -165,7 +165,7 @@ async fn confirm_session(
     let mut tx = state.pool.begin().await?;
     let session = lock_pending_session(&mut tx, id).await?;
     if session.komendant_id != auth.user.id {
-        return Err(AppError::forbidden("Чужая сессия"));
+        return Err(AppError::forbidden("Чужой ОПТ"));
     }
     let pushes = credit_session(&state, &mut tx, &session, auth.user.id, "komendant").await?;
     tx.commit().await?;
@@ -196,11 +196,11 @@ pub(crate) async fn lock_pending_session(
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
+    .ok_or_else(|| AppError::not_found("ОПТ не найден"))?;
     if session.status != SessionStatus::PendingConfirmation {
         return Err(AppError::conflict(
             "bad_status",
-            "Сессия не ожидает подтверждения",
+            "ОПТ не ожидает подтверждения",
         ));
     }
     Ok(session)
@@ -273,7 +273,7 @@ pub(crate) async fn credit_session(
 
     let credited_s = domain::fmt_minutes(credited);
     let mut pushes: Pushes = Vec::new();
-    let body = format!("Отработка подтверждена: зачтено {credited_s}");
+    let body = format!("Общественно полезный труд подтверждён: зачтено {credited_s}");
     state
         .notify(
             tx,
@@ -299,12 +299,12 @@ pub(crate) async fn credit_session(
         if !teachers.is_empty() {
             let left = student.debt_minutes - alloc.to_debt;
             let title = if left == 0 {
-                "Долг отработан"
+                "Задание выполнено"
             } else {
-                "Студент отработал часы"
+                "Студент выполнил часть задания"
             };
             let body = format!(
-                "{}: отработано {}, осталось {}",
+                "{}: выполнено {}, осталось {}",
                 student.full_name,
                 domain::fmt_minutes(alloc.to_debt),
                 domain::fmt_minutes(left)
@@ -338,7 +338,7 @@ async fn reject_session(
     let mut tx = state.pool.begin().await?;
     let session = lock_pending_session(&mut tx, id).await?;
     if session.komendant_id != auth.user.id {
-        return Err(AppError::forbidden("Чужая сессия"));
+        return Err(AppError::forbidden("Чужой ОПТ"));
     }
     let push = reject_pending(&state, &mut tx, &session, reason, auth.user.id, "komendant").await?;
     tx.commit().await?;
@@ -381,18 +381,18 @@ pub(crate) async fn reject_pending(
             Some(json!({"reason": reason, "by": actor_role})),
         )
         .await?;
-    let body = format!("Отработка отклонена: {reason}");
+    let body = format!("Общественно полезный труд отклонён: {reason}");
     state
         .notify(
             tx,
             &[session.student_id],
             "session_rejected",
-            "Сессия отклонена",
+            "ОПТ отклонён",
             &body,
             json!({"session_id": session.id}),
         )
         .await?;
-    Ok((vec![session.student_id], "Сессия отклонена".into(), body))
+    Ok((vec![session.student_id], "ОПТ отклонён".into(), body))
 }
 
 /// Serve a session photo from disk. Shared by the komendant/student and admin routes.
@@ -425,7 +425,7 @@ async fn session_photo(
         .bind(id)
         .fetch_optional(&state.pool)
         .await?
-        .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
+        .ok_or_else(|| AppError::not_found("ОПТ не найден"))?;
 
     let allowed = match auth.user.role {
         Role::Komendant => session.komendant_id == auth.user.id,

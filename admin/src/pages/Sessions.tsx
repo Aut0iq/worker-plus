@@ -33,7 +33,7 @@ export default function SessionsPage() {
       activeKey={tab}
       onChange={setTab}
       items={[
-        { key: 'list', label: 'Все отработки', children: <SessionList /> },
+        { key: 'list', label: 'Все записи ОПТ', children: <SessionList /> },
         { key: 'review', label: 'Проверка фото', children: <PhotoReview /> },
       ]}
     />
@@ -225,7 +225,7 @@ function AwaitingKomendant() {
   const reject = (s: SessionDto) => {
     let reason = '';
     Modal.confirm({
-      title: `Отклонить отработку ${s.student_name}?`,
+      title: `Отклонить ОПТ: ${s.student_name}?`,
       content: (
         <Input.TextArea placeholder="Причина (обязательно)" onChange={(e) => (reason = e.target.value)} />
       ),
@@ -331,7 +331,7 @@ function ReviewDrawer({
       title: 'Не зачесть фото?',
       content: (
         <>
-          <p>Зачтённые часы будут сняты: часть с баланса, остаток — в долг студента.</p>
+          <p>Зачтённые часы будут сняты: часть с баланса, остаток — в задание студента.</p>
           <Input.TextArea
             placeholder="Комментарий (обязательно)"
             onChange={(e) => {
@@ -366,7 +366,7 @@ function ReviewDrawer({
             {difficultyLabels[session.difficulty]} · зачтено:{' '}
             <b>{fmtMinutes(session.credited_minutes)}</b>
             <br />
-            На долг: {fmtMinutes(session.applied_to_debt)} · на баланс:{' '}
+            В счёт задания: {fmtMinutes(session.applied_to_debt)} · на баланс:{' '}
             {fmtMinutes(session.applied_to_balance)}
           </p>
           <Space>

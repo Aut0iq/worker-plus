@@ -195,7 +195,7 @@ export default function GroupsPage() {
           columns={[
             { title: 'ФИО', dataIndex: 'full_name' },
             { title: 'Логин', dataIndex: 'login' },
-            { title: 'Долг', render: (_, u) => fmtMinutes(u.debt_minutes) },
+            { title: 'Задание', render: (_, u) => fmtMinutes(u.debt_minutes) },
             {
               title: 'Активен',
               render: (_, u) => (u.is_active ? <Tag color="green">Да</Tag> : <Tag color="red">Нет</Tag>),

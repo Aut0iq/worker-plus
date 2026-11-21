@@ -417,7 +417,7 @@ async fn adjust_user(
     if new_debt < 0 || new_balance < 0 {
         return Err(AppError::bad_request(
             "negative_amount",
-            "Долг и баланс не могут быть отрицательными",
+            "Задание и баланс не могут быть отрицательными",
         ));
     }
     sqlx::query("UPDATE users SET debt_minutes = $1, balance_minutes = $2 WHERE id = $3")
@@ -709,7 +709,7 @@ async fn session_photo(
         .bind(id)
         .fetch_optional(&state.pool)
         .await?
-        .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
+        .ok_or_else(|| AppError::not_found("ОПТ не найден"))?;
     super::komendant::serve_photo(&state, &session).await
 }
 
@@ -757,7 +757,7 @@ async fn photo_review(
     .bind(id)
     .fetch_optional(&mut *tx)
     .await?
-    .ok_or_else(|| AppError::not_found("Сессия не найдена"))?;
+    .ok_or_else(|| AppError::not_found("ОПТ не найден"))?;
 
     let comment = req.comment.as_deref().map(str::trim).filter(|c| !c.is_empty());
     if !req.approved && comment.is_none() {
@@ -770,7 +770,7 @@ async fn photo_review(
     {
         return Err(AppError::conflict(
             "bad_status",
-            "Фото этой сессии не ожидает проверки",
+            "Фото этого ОПТ не ожидает проверки",
         ));
     }
 
@@ -823,7 +823,7 @@ async fn photo_review(
                 &[session.student_id, session.komendant_id],
                 "photo_rejected",
                 "Фото отклонено",
-                "Администратор отклонил фото сессии, начисление отменено",
+                "Администратор отклонил фото ОПТ, начисление отменено",
                 json!({"session_id": id}),
             )
             .await?;
@@ -844,7 +844,7 @@ async fn photo_review(
         state.push_later(
             vec![session.student_id, session.komendant_id],
             "Фото отклонено".into(),
-            "Начисление по сессии отменено".into(),
+            "Начисление по ОПТ отменено".into(),
             json!({"session_id": id}),
         );
     }

@@ -81,11 +81,11 @@ export default function StudentCard() {
     const debt = q.data?.user.debt_minutes ?? 0;
     if (!Number.isInteger(h) || h <= 0) return setOffErr('Укажите целое число часов больше 0');
     if (!offReason.trim()) return setOffErr('Укажите причину');
-    if (debt <= 0) return setOffErr('У студента нет долга');
+    if (debt <= 0) return setOffErr('У студента нет задания');
     setOffErr(null);
     // more hours than the debt writes off the whole debt, minutes included
     const minutes = Math.min(h * 60, debt);
-    const all = minutes === debt ? ' (весь долг)' : '';
+    const all = minutes === debt ? ' (всё задание)' : '';
     showAlert('Списать часы?', `${q.data?.user.full_name ?? 'Студент'}: ${fmtMinutes(minutes)}${all}`, [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Списать', onPress: () => writeOff.mutate(minutes) },
@@ -104,7 +104,7 @@ export default function StudentCard() {
           <Text style={styles.sub}>{u.group_name ?? '—'}</Text>
           <View style={styles.money}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.moneyLabel}>Долг</Text>
+              <Text style={styles.moneyLabel}>Задание</Text>
               <Text style={[styles.moneyValue, { color: colors.danger }]}>
                 {fmtMinutes(u.debt_minutes)}
               </Text>
@@ -151,8 +151,8 @@ export default function StudentCard() {
       )}
 
       <Card>
-        <Text style={styles.section}>Последние отработки</Text>
-        {sessions.length === 0 && <Empty text="Отработок нет" />}
+        <Text style={styles.section}>Последние записи ОПТ</Text>
+        {sessions.length === 0 && <Empty text="Записей ОПТ нет" />}
         {sessions.map((s) => {
           const st = sessionStatusLabels[s.status] ?? { label: s.status, color: colors.muted };
           return (

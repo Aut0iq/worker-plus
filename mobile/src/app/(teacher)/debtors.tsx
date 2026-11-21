@@ -30,7 +30,7 @@ export default function Debtors() {
       data={items}
       keyExtractor={(u) => u.id}
       ListHeaderComponent={
-        total > 0 ? <Text style={styles.header}>Должников: {total}</Text> : undefined
+        total > 0 ? <Text style={styles.header}>Студентов с заданием: {total}</Text> : undefined
       }
       refreshControl={
         <RefreshControl
@@ -40,7 +40,7 @@ export default function Debtors() {
       }
       onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
       onEndReachedThreshold={0.4}
-      ListEmptyComponent={q.isLoading ? undefined : <Empty text="Должников нет" />}
+      ListEmptyComponent={q.isLoading ? undefined : <Empty text="Невыполненных заданий нет" />}
       renderItem={({ item: u }) => (
         <TouchableOpacity style={styles.item} onPress={() => router.push(`/student/${u.id}`)}>
           <View style={{ flex: 1 }}>

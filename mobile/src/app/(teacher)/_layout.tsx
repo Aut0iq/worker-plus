@@ -20,7 +20,7 @@ export default function TeacherLayout() {
   return (
     <Tabs screenOptions={{ tabBarActiveTintColor: colors.primary }}>
       <Tabs.Screen name="index" options={{ title: 'Группы', tabBarIcon: tabIcon('group') }} />
-      <Tabs.Screen name="debtors" options={{ title: 'Должники', tabBarIcon: tabIcon('warning') }} />
+      <Tabs.Screen name="debtors" options={{ title: 'Задания', tabBarIcon: tabIcon('warning') }} />
       <Tabs.Screen
         name="notifications"
         options={{

@@ -55,7 +55,7 @@ export default function RootLayout() {
           <AuthProvider>
             <Stack>
               <Stack.Screen name="login" options={{ headerShown: false }} />
-              <Stack.Screen name="finish" options={{ title: 'Завершить отработку' }} />
+              <Stack.Screen name="finish" options={{ title: 'Завершить ОПТ' }} />
               <Stack.Screen name="qr" options={{ headerShown: false }} />
               <Stack.Screen name="group/[id]" options={{ title: 'Группа' }} />
               <Stack.Screen name="student/[id]" options={{ title: 'Студент' }} />

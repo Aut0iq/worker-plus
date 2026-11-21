@@ -143,13 +143,13 @@ pub async fn expire_overdue_sessions(state: &AppState) -> AppResult<usize> {
     for s in &expired {
         let mut targets = vec![s.student_id, s.komendant_id];
         targets.extend(admins.iter().copied());
-        let body = "Сессия превысила лимит времени и была аннулирована".to_string();
+        let body = "ОПТ превысил лимит времени и был аннулирован".to_string();
         state
             .notify(
                 &mut tx,
                 &targets,
                 "session_expired",
-                "Сессия аннулирована",
+                "ОПТ аннулирован",
                 &body,
                 json!({"session_id": s.id}),
             )
@@ -180,8 +180,8 @@ pub async fn expire_overdue_sessions(state: &AppState) -> AppResult<usize> {
     push_targets.dedup();
     state.push_later(
         push_targets,
-        "Сессия аннулирована".into(),
-        "Сессия превысила лимит времени и была аннулирована".into(),
+        "ОПТ аннулирован".into(),
+        "ОПТ превысил лимит времени и был аннулирован".into(),
         json!({}),
     );
     Ok(expired.len())

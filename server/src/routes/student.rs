@@ -53,7 +53,7 @@ async fn start_session(
     if open.is_some() {
         return Err(AppError::conflict(
             "session_exists",
-            "У вас уже есть незавершённая сессия",
+            "У вас уже есть незавершённый ОПТ",
         ));
     }
 
@@ -73,7 +73,7 @@ async fn start_session(
     .map_err(|e| match &e {
         sqlx::Error::Database(d) if d.is_unique_violation() => AppError::conflict(
             "session_exists",
-            "У вас уже есть незавершённая сессия",
+            "У вас уже есть незавершённый ОПТ",
         ),
         _ => AppError::from(e),
     })?;
@@ -169,7 +169,7 @@ async fn finish_session(
     .bind(auth.user.id)
     .fetch_optional(&state.pool)
     .await?
-    .ok_or_else(|| AppError::conflict("no_active_session", "Нет активной сессии"))?;
+    .ok_or_else(|| AppError::conflict("no_active_session", "Нет активного ОПТ"))?;
 
     if verified.is_some_and(|v| v.komendant_id != session.komendant_id) {
         return Err(AppError::bad_request(
@@ -213,7 +213,7 @@ async fn finish_session(
         if updated.rows_affected() == 0 {
             return Err(AppError::conflict(
                 "no_active_session",
-                "Нет активной сессии",
+                "Нет активного ОПТ",
             ));
         }
         state
@@ -240,9 +240,9 @@ async fn finish_session(
                 &mut tx,
                 &[session.komendant_id],
                 "session_finished",
-                "Сессия ожидает подтверждения",
+                "ОПТ ожидает подтверждения",
                 &format!(
-                    "Студент {} завершил сессию, к зачёту {}",
+                    "Студент {} завершил ОПТ, к зачёту {}",
                     auth.user.full_name,
                     domain::fmt_minutes(credited)
                 ),
@@ -268,8 +268,8 @@ async fn finish_session(
 
     state.push_later(
         vec![session.komendant_id],
-        "Сессия ожидает подтверждения".into(),
-        format!("Студент {} завершил сессию", auth.user.full_name),
+        "ОПТ ожидает подтверждения".into(),
+        format!("Студент {} завершил ОПТ", auth.user.full_name),
         json!({"session_id": session.id}),
     );
 
@@ -302,7 +302,7 @@ async fn expire_finish(
         drop(tx);
         return Err(AppError::conflict(
             "no_active_session",
-            "Нет активной сессии",
+            "Нет активного ОПТ",
         ));
     }
     let admins: Vec<Uuid> =
@@ -312,11 +312,11 @@ async fn expire_finish(
     let mut targets = vec![session.komendant_id, auth.user.id];
     targets.extend(admins);
     let body = format!(
-        "Сессия студента {} превысила лимит времени и аннулирована",
+        "ОПТ студента {} превысил лимит времени и аннулирован",
         auth.user.full_name
     );
     state
-        .notify(&mut tx, &targets, "session_expired", "Сессия аннулирована", &body, json!({"session_id": session.id}))
+        .notify(&mut tx, &targets, "session_expired", "ОПТ аннулирован", &body, json!({"session_id": session.id}))
         .await?;
     state
         .audit(
@@ -338,7 +338,7 @@ async fn expire_finish(
         )
         .await?;
     tx.commit().await?;
-    state.push_later(targets, "Сессия аннулирована".into(), body, json!({"session_id": session.id}));
+    state.push_later(targets, "ОПТ аннулирован".into(), body, json!({"session_id": session.id}));
 
     let row = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(format!("{SESSION_SELECT} WHERE s.id = $1")))
         .bind(session.id)

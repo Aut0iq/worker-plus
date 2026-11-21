@@ -68,7 +68,7 @@ export function ProfileScreen() {
         </Text>
         <View style={styles.money}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.moneyLabel}>Долг</Text>
+            <Text style={styles.moneyLabel}>Задание</Text>
             <Text style={[styles.moneyValue, { color: colors.danger }]}>
               {fmtMinutes(user.debt_minutes)}
             </Text>

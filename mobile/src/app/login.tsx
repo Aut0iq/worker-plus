@@ -43,7 +43,7 @@ export default function LoginScreen() {
     >
       <View style={styles.box}>
         <Text style={styles.title}>Work+</Text>
-        <Text style={styles.sub}>Учёт часов отработок</Text>
+        <Text style={styles.sub}>Учёт общественно полезного труда</Text>
         <Field
           label="Логин"
           value={loginName}

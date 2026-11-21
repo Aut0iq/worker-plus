@@ -41,7 +41,7 @@ export default function Dashboard() {
       <Row gutter={16}>
         <Col span={6}>
           <Card>
-            <Statistic title="Активные отработки" value={active ?? 0} />
+            <Statistic title="Идёт ОПТ" value={active ?? 0} />
           </Card>
         </Col>
         <Col span={6}>

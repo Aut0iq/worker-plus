@@ -114,11 +114,11 @@ function SummaryDrawer({ summary, onClose }: { summary: SummaryDto | null; onClo
     arr.reduce((a, r) => a + Number(f(r)), 0);
   const cols = [
     { title: 'Студент', dataIndex: 'full_name' },
-    { title: 'Сессий', render: (_: unknown, r: SummaryRowDto) => Number(r.sessions_count) },
+    { title: 'Записей ОПТ', render: (_: unknown, r: SummaryRowDto) => Number(r.sessions_count) },
     { title: 'Округлено', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.rounded_minutes) },
     { title: 'Зачтено', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.credited_minutes) },
     { title: 'Назначено', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.assigned_minutes) },
-    { title: 'Долг', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.debt_minutes) },
+    { title: 'Задание', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.debt_minutes) },
     { title: 'Баланс', render: (_: unknown, r: SummaryRowDto) => fmtMinutes(r.balance_minutes) },
   ];
   return (

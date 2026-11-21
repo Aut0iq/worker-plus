@@ -258,7 +258,7 @@ export default function UsersPage() {
           { title: 'Логин', dataIndex: 'login' },
           { title: 'Роль', render: (_, u) => roleLabels[u.role] ?? u.role },
           { title: 'Группа', dataIndex: 'group_name', render: (v) => v ?? '—' },
-          { title: 'Долг', render: (_, u) => fmtMinutes(u.debt_minutes) },
+          { title: 'Задание', render: (_, u) => fmtMinutes(u.debt_minutes) },
           { title: 'Баланс', render: (_, u) => fmtMinutes(u.balance_minutes) },
           {
             title: 'Активен',
@@ -327,7 +327,7 @@ export default function UsersPage() {
         onOk={() => adjustForm.submit()}
       >
         <Form form={adjustForm} layout="vertical" onFinish={(v) => doAdjust.mutate(v)}>
-          <Form.Item name="debt" label="Изменение долга (минуты, может быть отрицательным)">
+          <Form.Item name="debt" label="Изменение задания (минуты, может быть отрицательным)">
             <Input type="number" />
           </Form.Item>
           <Form.Item name="balance" label="Изменение баланса (минуты)">
@@ -391,7 +391,7 @@ function UserDetail({ id, onClose }: { id: string | null; onClose: () => void })
             {isStudent && (
               <>
                 <br />
-                Долг: <b>{fmtMinutes(shown.debt_minutes)}</b> · Баланс: <b>{fmtMinutes(shown.balance_minutes)}</b>
+                Задание: <b>{fmtMinutes(shown.debt_minutes)}</b> · Баланс: <b>{fmtMinutes(shown.balance_minutes)}</b>
               </>
             )}
           </Typography.Paragraph>
@@ -420,7 +420,7 @@ function UserDetail({ id, onClose }: { id: string | null; onClose: () => void })
           )}
           {isStudent && (
             <>
-              <Typography.Title level={5}>Отработки</Typography.Title>
+              <Typography.Title level={5}>ОПТ</Typography.Title>
               <Table
                 size="small"
                 rowKey="id"
