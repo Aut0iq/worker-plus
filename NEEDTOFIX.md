@@ -8,8 +8,8 @@
    в EAS (expo.dev → Credentials). На сервере `EXPO_PUSH_ENABLED=true` уже включён
    (2026-11-21). `mobile/app.config.ts` подставляет оба значения из окружения.
 2. **Новый package id `ru.workerplus.app`** = новое приложение: на телефонах
-   удалить старое «Prila» и поставить новый APK. Локальную папку `mobile/android`
-   пересоздать: `npx expo prebuild -p android --clean`.
+   удалить старое «Prila» и поставить новый APK (релиз `v1.1.0`). APK собирается
+   только в GitHub Actions (тег `v*`), локально не собираем.
 3. 9 moderate `npm audit` в админке — нужен переход react-router 6→7 (breaking).
 
 ## Долгий ящик (не напоминать — заказчик напомнит сам)
