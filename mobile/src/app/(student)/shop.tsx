@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { showAlert } from '@/alert';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/api/client';
 import type { OrderDto } from '@/api/types/OrderDto';
@@ -37,7 +38,7 @@ export default function Shop() {
       void qc.invalidateQueries({ queryKey: ['me'] });
       void qc.invalidateQueries({ queryKey: ['my-orders'] });
       void qc.invalidateQueries({ queryKey: ['rewards'] });
-      Alert.alert('Готово', 'Заказ создан');
+      showAlert('Готово', 'Заказ создан');
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Ошибка покупки'),
   });
@@ -87,7 +88,7 @@ export default function Shop() {
                         disabled={noStock || poor}
                         loading={buy.isPending && buy.variables === r.id}
                         onPress={() =>
-                          Alert.alert('Купить?', `${r.title} за ${fmtMinutes(r.price_minutes)}`, [
+                          showAlert('Купить?', `${r.title} за ${fmtMinutes(r.price_minutes)}`, [
                             { text: 'Отмена', style: 'cancel' },
                             { text: 'Купить', onPress: () => buy.mutate(r.id) },
                           ])

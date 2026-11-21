@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { showAlert } from '@/alert';
 import { useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '@/api/client';
@@ -16,11 +17,14 @@ export default function StudentCard() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const colors = useColors();
   const styles = useStyles();
-  const { config } = useAuth();
+  const { config, user: me } = useAuth();
   const tz = config?.timezone ?? 'UTC';
   const qc = useQueryClient();
   const [hours, setHours] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [offHours, setOffHours] = useState('');
+  const [offReason, setOffReason] = useState('');
+  const [offErr, setOffErr] = useState<string | null>(null);
 
   const q = useQuery({
     queryKey: ['student', id],
@@ -35,7 +39,7 @@ export default function StudentCard() {
       void qc.invalidateQueries({ queryKey: ['student', id] });
       void qc.invalidateQueries({ queryKey: ['debtors'] });
       void qc.invalidateQueries({ queryKey: ['group-students'] });
-      Alert.alert('Готово', 'Часы назначены');
+      showAlert('Готово', 'Часы назначены');
     },
     onError: (e) => setErr(e instanceof ApiError ? e.message : 'Ошибка'),
   });
@@ -46,9 +50,45 @@ export default function StudentCard() {
     if (!Number.isInteger(h) || h <= 0) return setErr('Укажите целое число часов больше 0');
     if (h > MAX_HOURS) return setErr(`Не больше ${MAX_HOURS} ч за раз`);
     setErr(null);
-    Alert.alert('Назначить часы?', `${q.data?.user.full_name ?? 'Студент'}: ${h} ч`, [
+    showAlert('Назначить часы?', `${q.data?.user.full_name ?? 'Студент'}: ${h} ч`, [
       { text: 'Отмена', style: 'cancel' },
       { text: 'Назначить', onPress: () => assign.mutate(h * 60) },
+    ]);
+  };
+
+  // writing hours off is admin-only (the server checks the role too)
+  const writeOff = useMutation({
+    mutationFn: (minutes: number) =>
+      api.post(`/api/admin/users/${id}/adjust`, {
+        debt_delta: -minutes,
+        balance_delta: 0,
+        reason: offReason.trim(),
+      }),
+    onSuccess: () => {
+      setOffHours('');
+      setOffReason('');
+      setOffErr(null);
+      void qc.invalidateQueries({ queryKey: ['student', id] });
+      void qc.invalidateQueries({ queryKey: ['debtors'] });
+      void qc.invalidateQueries({ queryKey: ['group-students'] });
+      showAlert('Готово', 'Часы списаны');
+    },
+    onError: (e) => setOffErr(e instanceof ApiError ? e.message : 'Ошибка'),
+  });
+
+  const submitWriteOff = () => {
+    const h = Number(offHours.trim());
+    const debt = q.data?.user.debt_minutes ?? 0;
+    if (!Number.isInteger(h) || h <= 0) return setOffErr('Укажите целое число часов больше 0');
+    if (!offReason.trim()) return setOffErr('Укажите причину');
+    if (debt <= 0) return setOffErr('У студента нет долга');
+    setOffErr(null);
+    // more hours than the debt writes off the whole debt, minutes included
+    const minutes = Math.min(h * 60, debt);
+    const all = minutes === debt ? ' (весь долг)' : '';
+    showAlert('Списать часы?', `${q.data?.user.full_name ?? 'Студент'}: ${fmtMinutes(minutes)}${all}`, [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Списать', onPress: () => writeOff.mutate(minutes) },
     ]);
   };
 
@@ -92,6 +132,23 @@ export default function StudentCard() {
         <ErrorText>{err}</ErrorText>
         <Button title="Назначить" loading={assign.isPending} onPress={submit} />
       </Card>
+
+      {me?.role === 'admin' && (
+        <Card>
+          <Text style={styles.section}>Списать часы</Text>
+          <Field
+            label="Часы"
+            value={offHours}
+            onChangeText={(t) => setOffHours(t.replace(/[^0-9]/g, ''))}
+            keyboardType="number-pad"
+            placeholder="0"
+            maxLength={4}
+          />
+          <Field label="Причина" value={offReason} onChangeText={setOffReason} placeholder="За что списываем" />
+          <ErrorText>{offErr}</ErrorText>
+          <Button title="Списать" danger loading={writeOff.isPending} onPress={submitWriteOff} />
+        </Card>
+      )}
 
       <Card>
         <Text style={styles.section}>Последние отработки</Text>

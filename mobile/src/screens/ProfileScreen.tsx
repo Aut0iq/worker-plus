@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { showAlert } from '@/alert';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { router } from 'expo-router';
 import { api, ApiError } from '../api/client';
@@ -44,7 +45,7 @@ export function ProfileScreen() {
       setNewPwd('');
       setNewPwd2('');
       setPwdErr(null);
-      Alert.alert('Готово', 'Пароль изменён');
+      showAlert('Готово', 'Пароль изменён');
     },
     onError: (e) => setPwdErr(e instanceof ApiError ? e.message : 'Ошибка'),
   });

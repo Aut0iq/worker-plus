@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  Alert,
   Modal,
   Pressable,
   RefreshControl,
@@ -10,6 +9,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { showAlert } from '@/alert';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, errorText } from '@/api/client';
 import type { Paginated } from '@/api/types/Paginated';
@@ -137,7 +137,7 @@ export default function KomendantSessions() {
                   style={{ flex: 1 }}
                   loading={confirm.isPending && confirm.variables === s.id}
                   onPress={() =>
-                    Alert.alert('Подтвердить?', `${s.student_name}: ${fmtMinutes(s.credited_minutes)}`, [
+                    showAlert('Подтвердить?', `${s.student_name}: ${fmtMinutes(s.credited_minutes)}`, [
                       { text: 'Отмена', style: 'cancel' },
                       { text: 'Подтвердить', onPress: () => confirm.mutate(s.id) },
                     ])
