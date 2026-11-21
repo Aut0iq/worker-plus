@@ -5,21 +5,22 @@
 1. **Push в релизном APK:** создать проект на expo.dev и Firebase-проект Android
    (`ru.workerplus.app`), добавить в GitHub secrets `EAS_PROJECT_ID` и
    `GOOGLE_SERVICES_JSON` (содержимое google-services.json), FCM-ключ загрузить
-   в EAS (`eas credentials`). На сервере `EXPO_PUSH_ENABLED=true`.
-   `mobile/app.config.ts` подставляет оба значения из окружения.
+   в EAS (expo.dev → Credentials). На сервере `EXPO_PUSH_ENABLED=true` уже включён
+   (2026-11-21). `mobile/app.config.ts` подставляет оба значения из окружения.
 2. **Новый package id `ru.workerplus.app`** = новое приложение: на телефонах
    удалить старое «Prila» и поставить новый APK. Локальную папку `mobile/android`
    пересоздать: `npx expo prebuild -p android --clean`.
-3. **HTTPS:** сейчас сервер на `http://185.28.173.203` (порт 80, `PORT=80`). После
-   покупки домена — Caddy-профиль, `TRUST_PROXY=true`, `PORT=127.0.0.1:8080`,
-   в приложении адрес `https://…` и выключить `usesCleartextTraffic`.
-4. **Веб-версия `/app` без камеры.** Камера в браузере работает только по HTTPS,
-   поэтому сканер QR и фото работы на вебе заменены сообщением (`WEB_NO_CAMERA` в
-   `Scanner.tsx`, `finish.tsx`). После HTTPS: вернуть `CameraView` на вебе, фото в
-   `finish.tsx` отправлять как Blob в FormData, добавить иконку для «На экран Домой».
-5. **Проход на телефонах и в вебе** (студент ↔ комендант, тёмная тема, должники,
-   назначение/списание часов админом) и по UI админки — ещё не делался.
-6. 9 moderate `npm audit` в админке — нужен переход react-router 6→7 (breaking).
+3. 9 moderate `npm audit` в админке — нужен переход react-router 6→7 (breaking).
+
+## Долгий ящик (не напоминать — заказчик напомнит сам)
+
+- **HTTPS (после покупки домена):** сейчас сервер на `http://185.28.173.203`
+  (порт 80, `PORT=80`). Caddy-профиль, `TRUST_PROXY=true`, `PORT=127.0.0.1:8080`,
+  в приложении адрес `https://…` и выключить `usesCleartextTraffic`.
+- **Камера в веб-версии `/app`** (только по HTTPS): сейчас сканер QR и фото работы
+  на вебе заменены сообщением (`WEB_NO_CAMERA` в `Scanner.tsx`, `finish.tsx`).
+  Вернуть `CameraView` на вебе, фото в `finish.tsx` отправлять как Blob в FormData,
+  добавить иконку для «На экран Домой».
 
 ## Известные проблемы
 
