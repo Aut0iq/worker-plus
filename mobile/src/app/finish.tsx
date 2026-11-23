@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Image, Platform, StyleSheet, Text, View } fro
 import { router } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { api, ApiError, errorText } from '@/api/client';
 import type { ActiveSessionResponse } from '@/api/types/ActiveSessionResponse';
@@ -79,11 +80,7 @@ function NativeFinish() {
     try {
       const fd = new FormData();
       fd.append('qr', qr);
-      fd.append('photo', {
-        uri: photo.uri,
-        name: 'photo.jpg',
-        type: 'image/jpeg',
-      } as unknown as Blob);
+      fd.append('photo', new File(photo.uri));
       finished(await api.post<SessionDto>('/api/student/sessions/finish', fd));
     } catch (e) {
       // the upload may have reached the server even though the answer was lost
