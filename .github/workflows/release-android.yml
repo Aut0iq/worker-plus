@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # only this job publishes the GitHub Release
-    timeout-minutes: 60
+    timeout-minutes: 120
     defaults:
       run:
         working-directory: mobile
@@ -53,8 +53,8 @@ jobs:
           [ -n "$EAS_PROJECT_ID" ] && echo "EAS_PROJECT_ID=$EAS_PROJECT_ID" >> "$GITHUB_ENV" \
             || echo "::warning::EAS_PROJECT_ID secret is not set: push token will not be registered"
       - run: npx expo prebuild -p android --no-install
-      # shortcut: arm64 only (all current phones); add armeabi-v7a if old 32-bit devices must be supported
-      - run: ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+      # all ABIs in one APK: 32/64-bit ARM phones and x86/x86_64 emulators
+      - run: ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a,x86,x86_64 --no-daemon
         working-directory: mobile/android
       - name: Sign APK with release key
         env:
