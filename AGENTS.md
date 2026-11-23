@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Full project context (spec, decisions, status, test server, TODO): `docs/HANDOFF.md`.
+Full project context (spec, decisions, status): `docs/HANDOFF.md`; current TODO and known
+issues: `NEEDTOFIX.md`.
 
 ## Build / test / run
 
@@ -33,13 +34,10 @@ scripts/backup.sh /var/backups/prila          # pg_dump + photos
 
 ## Current dev machine (Windows, B:\worker-plus)
 
-- No local Rust / Postgres. Rust is built and tested on the test-server LXC
-  (CT 123, 192.168.31.63, via `ssh root@192.168.31.110` + `pct exec 123`):
-  dev copy `/root/dev/worker-plus` (sync with `tar ... | tar --no-same-owner -x`),
-  `docker run --rm --network worker-plus_default -v wp-cargo-reg:/usr/local/cargo/registry
-  -v wp-cargo-target:/target -e CARGO_TARGET_DIR=/target ... rust:1 cargo test`
-  with `DATABASE_URL=postgres://prila:<DB_PASSWORD>@db:5432/prila`.
-- Test stack: `/opt/worker-plus` on CT 123 → `git pull && docker compose up -d --build`.
+- No local Rust / Postgres: Rust is checked by CI (`.github/workflows/ci.yml`:
+  clippy + tests on every push).
+- Production: `http://185.28.173.203`, stack in `/opt/worker-plus`. Deploy steps:
+  `NEEDTOFIX.md` («Выкатка»); image build with DNS retries: `/root/wp-build.sh`.
 - Scheduled task "worker-plus autopush" commits (`new changes`) and pushes every 5 min.
 - Old-PC tooling (`scripts/dev-db.sh`, offline cargo in WSL) is only needed on a
   machine without Docker/network.
